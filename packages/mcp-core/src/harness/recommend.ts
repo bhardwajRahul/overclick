@@ -366,7 +366,12 @@ export const DEFAULT_MODEL_CATALOG: readonly ModelInfo[] = [
   {
     id: "gpt-5.6-sol",
     tier: "mid",
-    aliases: ["sol", "gpt-5-6-sol", "gpt-reserve"],
+    aliases: ["sol", "gpt-5-6-sol"],
+  },
+  {
+    id: "gpt-reserve",
+    tier: "mid",
+    aliases: [],
   },
   { id: "gpt-5.6-terra", tier: "mid", aliases: ["terra", "gpt-5-6-terra"] },
   { id: "gpt-5.6-luna", tier: "cheap", aliases: ["luna", "gpt-5-6-luna"] },

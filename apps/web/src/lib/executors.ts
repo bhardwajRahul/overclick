@@ -18,7 +18,6 @@ export const EXECUTOR_CATALOG: readonly ExecutorDef[] = [
     id: "codex",
     label: "Codex",
     models: [
-      // Internal Codex reserve alias; it uses the published GPT-5.6 Sol rate.
       "gpt-reserve",
       "gpt-5.6-sol",
       "gpt-5.6-terra",

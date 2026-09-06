@@ -103,7 +103,6 @@ const MODEL_ALIASES: Record<string, string> = {
   haiku: "haiku-4-5",
   k3: "k3",
   "gpt-5-6": "gpt-5-6-sol",
-  "gpt-reserve": "gpt-5-6-sol",
 };
 
 function normalize(value: string): string {

@@ -51,7 +51,7 @@ describe("model key normalization", () => {
     expect(normalizeModelKey("kimi")).toBe("k3");
     expect(normalizeModelKey("claude-fable-5")).toBe("fable-5");
     expect(normalizeModelKey("gpt-5-codex")).toBe("gpt-5-3-codex-spark");
-    expect(normalizeModelKey("gpt-reserve")).toBe("gpt-5-6-sol");
+    expect(normalizeModelKey("gpt-reserve")).toBe("gpt-reserve");
   });
 
   it("collapses the four Kimi spellings onto k3", () => {
@@ -297,10 +297,10 @@ describe("seeded price list", () => {
     expect(findModelPrice(rows, "gpt-5-3-codex-spark")).not.toBeNull();
   });
 
-  it("prices the Codex reserve alias at the published GPT-5.6 Sol rate", () => {
+  it("prices the independent Codex reserve model at its own configured rate", () => {
     const price = findModelPrice(factoryModelPrices(), "gpt-reserve");
     expect(price).toMatchObject({
-      model: "gpt-5-6-sol",
+      model: "gpt-reserve",
       inputPerMtok: 4,
       outputPerMtok: 20,
       cachePerMtok: 0.4,

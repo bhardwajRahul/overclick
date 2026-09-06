@@ -62,9 +62,6 @@ export const MODEL_KEY_ALIASES: Readonly<Record<string, string>> = {
   "codex/gpt-5.3-codex-spark": "gpt-5-3-codex-spark",
   "gpt-5.6-sol": "gpt-5-6-sol",
   "openai/gpt-5.6-sol": "gpt-5-6-sol",
-  // Codex's internal reserve alias currently runs on the GPT-5.6 Sol tier;
-  // keep it priced by the published Sol row instead of inventing a second rate.
-  "gpt-reserve": "gpt-5-6-sol",
   "claude-opus-5": "opus-5",
   "claude-fable-5": "fable-5",
   "claude-sonnet-5": "sonnet-5",
@@ -183,6 +180,9 @@ const SEED: SeedPrice[] = [
   // their write column falls back to the input rate instead of guessing —
   // never confirmed, never zeroed.
   p3("gpt-5-6-sol", 4, 20, 0.4, 5),
+  // gpt-reserve is a first-class model. Its current internal rate matches
+  // Sol, but this is an independent row so the rates can diverge later.
+  p3("gpt-reserve", 4, 20, 0.4, 5),
   p3("gpt-5-6-terra", 2, 12, 0.2, 2.5),
   p3("gpt-5-6-luna", 0.2, 1.2, 0.02, 0.25),
   p1("gpt-5-5", 1.25, 10, 0.125, 1.25),
