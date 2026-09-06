@@ -51,6 +51,7 @@ describe("model key normalization", () => {
     expect(normalizeModelKey("kimi")).toBe("k3");
     expect(normalizeModelKey("claude-fable-5")).toBe("fable-5");
     expect(normalizeModelKey("gpt-5-codex")).toBe("gpt-5-3-codex-spark");
+    expect(normalizeModelKey("gpt-reserve")).toBe("gpt-5-6-sol");
   });
 
   it("collapses the four Kimi spellings onto k3", () => {
@@ -244,6 +245,7 @@ describe("seeded price list", () => {
       "claude-opus-5",
       "claude-sonnet-5",
       "gpt-5.6-sol",
+      "gpt-reserve",
       "gpt-5.4-mini",
       "3.1-pro",
       "3.5-flash",
@@ -293,6 +295,17 @@ describe("seeded price list", () => {
   it("adds GPT-5.3-Codex-Spark once it gets a published rate", () => {
     const rows = factoryModelPrices();
     expect(findModelPrice(rows, "gpt-5-3-codex-spark")).not.toBeNull();
+  });
+
+  it("prices the Codex reserve alias at the published GPT-5.6 Sol rate", () => {
+    const price = findModelPrice(factoryModelPrices(), "gpt-reserve");
+    expect(price).toMatchObject({
+      model: "gpt-5-6-sol",
+      inputPerMtok: 4,
+      outputPerMtok: 20,
+      cachePerMtok: 0.4,
+      cacheWritePerMtok: 5,
+    });
   });
 
   it("prices a free tier at zero, which is a price and not a missing one", () => {

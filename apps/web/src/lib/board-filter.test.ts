@@ -267,19 +267,19 @@ describe("several projects at once", () => {
   });
 
   it("checks and unchecks, with All projects at both edges", () => {
-    // Under All every box is ticked, so a click unticks the one clicked and
-    // leaves the rest: the box does what a ticked box promises.
-    expect(toggleProject(ALL, "p2", projects)).toEqual(["p1", "p3"]);
-    // Ticking it back covers everything again, which is All.
-    expect(toggleProject(["p1", "p3"], "p2", projects)).toEqual(ALL);
+    // Under All, clicking a project selects that project.
+    expect(toggleProject(ALL, "p2", projects)).toEqual(["p2"]);
+    // Clicking another project adds it to the selection.
     expect(toggleProject(["p2"], "p1", projects)).toEqual(["p1", "p2"]);
+    // Unchecking one leaves the other selected.
+    expect(toggleProject(["p1", "p2"], "p1", projects)).toEqual(["p2"]);
     // Unchecking the last one is All projects again, never an empty board.
     expect(toggleProject(["p2"], "p2", projects)).toEqual(ALL);
-    // So is checking every one of them.
+    // Checking every one of them is All projects again.
     expect(toggleProject(["p1", "p2"], "p3", projects)).toEqual(ALL);
   });
 
-  it("keeps All when the only project there is would be unticked", () => {
+  it("keeps All when the only project there is would be toggled", () => {
     const one = [{ id: "p1" }];
     expect(toggleProject(ALL, "p1", one)).toEqual(ALL);
   });
@@ -594,8 +594,7 @@ describe("the release filter only offers releases", () => {
   });
 
   it("toggles organizations with the same All edges the project filter has", () => {
-    // Same rule as the project filter: a click under All unticks that one.
-    expect(toggleOrganization([], "o1", organizations)).toEqual(["o2"]);
+    expect(toggleOrganization([], "o1", organizations)).toEqual(["o1"]);
     expect(toggleOrganization(["o1"], "o1", organizations)).toEqual([]);
     expect(toggleOrganization(["o1"], "o2", organizations)).toEqual([]);
     expect(selectOnly("o1", organizations)).toEqual(["o1"]);

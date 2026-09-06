@@ -59,6 +59,7 @@ const MODEL_EFFORTS: Record<string, EffortCatalogSpec> = {
   // Codex's GPT-5.6 CLI family exposes the six levels below. The older
   // families stop at xhigh in the public model guidance.
   "gpt-5-6-sol": CODEX_56,
+  "gpt-reserve": CODEX_56,
   "gpt-5-6-terra": CODEX_56,
   "gpt-5-6-luna": CODEX_56,
   "gpt-5-5": CODEX_OLDER,
@@ -102,6 +103,7 @@ const MODEL_ALIASES: Record<string, string> = {
   haiku: "haiku-4-5",
   k3: "k3",
   "gpt-5-6": "gpt-5-6-sol",
+  "gpt-reserve": "gpt-5-6-sol",
 };
 
 function normalize(value: string): string {

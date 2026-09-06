@@ -61,18 +61,24 @@ export function OrganizationFilter({
       ? (options.find((item) => item.id === value[0])?.name ??
         t.board.allOrganizations)
       : t.board.organizationsPicked(value.length);
+  const tooltip = all
+    ? t.board.allOrganizations
+    : options
+        .filter((item) => value.includes(item.id))
+        .map((item) => item.name)
+        .join(", ") || label;
 
   return (
     <div className="project-filter organization-filter" ref={root}>
       <button
         type="button"
-        className="pf-trigger"
+        className={`pf-trigger${!all ? " on" : ""}`}
         aria-label={t.board.organizationFilter}
         aria-haspopup="listbox"
         aria-expanded={open}
         onClick={() => setOpen((current) => !current)}
       >
-        <span className="pf-label" title={label}>
+        <span className="pf-label" title={tooltip}>
           {label}
         </span>
         <Icon name="chevronDown" label={null} size={14} />
@@ -102,10 +108,7 @@ export function OrganizationFilter({
               <span className="pf-opt-name">{t.board.allOrganizations}</span>
             </button>
             {options.map((option) => {
-              // Under the shortcut every business is on screen, so every box
-              // is ticked: the panel says what the board shows, not what was
-              // clicked to get there.
-              const picked = all || value.includes(option.id);
+              const picked = value.includes(option.id);
               return (
                 <div className="pf-opt-row" role="presentation" key={option.id}>
                   <button

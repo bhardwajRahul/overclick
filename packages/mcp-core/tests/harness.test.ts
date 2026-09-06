@@ -36,6 +36,14 @@ describe("model-specific effort catalog", () => {
       "xhigh",
       "max",
     ]);
+    expect(effortOptionsForModel({ cli: "codex", model: "gpt-reserve" })).toEqual([
+      "minimal",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+    ]);
     expect(effortOptionsForModel({ cli: "kimi", model: "k3" })).toEqual(["max"]);
     expect(effortOptionsForModel({ cli: "kimi", model: "kimi-for-coding" })).toEqual([
       "off",

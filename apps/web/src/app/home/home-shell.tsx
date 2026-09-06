@@ -321,11 +321,9 @@ export function HomeShell({
     filter.missionId && filter.missionId !== NO_MISSION
       ? missions.find((item) => item.id === filter.missionId) ?? null
       : null;
-  const defaultProject = projects[0]?.id;
   const hasActiveFilters =
     filter.organizationIds.length > 0 ||
-    filter.projectIds.length !== (defaultProject ? 1 : 0) ||
-    (defaultProject ? filter.projectIds[0] !== defaultProject : false) ||
+    filter.projectIds.length > 0 ||
     filter.missionId !== null ||
     filter.types.length > 0 ||
     filter.priorities.length > 0 ||
@@ -370,7 +368,7 @@ export function HomeShell({
     setDebouncedSearchQuery("");
     apply({
       organizationIds: [],
-      projectIds: defaultProject ? [defaultProject] : [],
+      projectIds: [],
       missionId: null,
       types: [],
       priorities: [],

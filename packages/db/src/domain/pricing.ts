@@ -62,6 +62,9 @@ export const MODEL_KEY_ALIASES: Readonly<Record<string, string>> = {
   "codex/gpt-5.3-codex-spark": "gpt-5-3-codex-spark",
   "gpt-5.6-sol": "gpt-5-6-sol",
   "openai/gpt-5.6-sol": "gpt-5-6-sol",
+  // Codex's internal reserve alias currently runs on the GPT-5.6 Sol tier;
+  // keep it priced by the published Sol row instead of inventing a second rate.
+  "gpt-reserve": "gpt-5-6-sol",
   "claude-opus-5": "opus-5",
   "claude-fable-5": "fable-5",
   "claude-sonnet-5": "sonnet-5",

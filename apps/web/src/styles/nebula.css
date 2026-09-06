@@ -1014,6 +1014,7 @@ body:has(.nb) { display: block; padding: 0; background: var(--nebula-void); }
 }
 /* an applied filter reads as text-1 with the count badge, never as a
    colour of its own */
+.nb .topbar-l2 .pf-trigger.on,
 .nb .topbar-l2 .ff-trigger.on { color: var(--nebula-text-primary); }
 .nb .topbar-l2 .badge {
   display: inline-flex; align-items: center; justify-content: center;
@@ -1349,7 +1350,7 @@ body:has(.nb) { display: block; padding: 0; background: var(--nebula-void); }
      past it (OCL-84). Everything below that could overflow it also gets a
      real max-width, so this is a backstop, not the whole fix. */
   overflow: hidden;
-  padding: var(--nebula-space-2) var(--nebula-space-4); position: relative; cursor: pointer;
+  padding: 6px 10px; position: relative; cursor: pointer;
   transition:
     transform 0.35s var(--nebula-ease-atmosphere),
     border-color 0.35s var(--nebula-ease-atmosphere),
@@ -1368,14 +1369,15 @@ body:has(.nb) { display: block; padding: 0; background: var(--nebula-void); }
    the cost is fixed at the right, exactly where §3 draws it, so the footer
    never has to make room for it. */
 .nb .card .id-row {
-  display: flex; align-items: flex-start; justify-content: space-between;
-  gap: var(--nebula-space-2); margin-bottom: var(--nebula-space-1);
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--nebula-space-1); margin-bottom: 2px;
 }
 .nb .card .id-row-main {
-  display: flex; align-items: center; flex-wrap: wrap; min-width: 0;
-  gap: var(--nebula-space-1) var(--nebula-space-2);
+  display: flex; align-items: center; flex-wrap: nowrap; min-width: 0;
+  gap: var(--nebula-space-1); overflow: hidden;
 }
 .nb .card .cid {
+  flex: none;
   font-family: var(--nebula-font-mono); font-size: 10px;
   color: var(--nebula-text-tertiary); letter-spacing: 0.06em;
 }
@@ -1384,10 +1386,11 @@ body:has(.nb) { display: block; padding: 0; background: var(--nebula-void); }
   color: var(--nebula-text-secondary);
   font-weight: var(--nebula-weight-medium);
 }
-.nb .card .id-sep { color: var(--nebula-text-tertiary); }
+.nb .card .id-sep { flex: none; color: var(--nebula-text-tertiary); }
 /* The type, a plain word in the meta line — no chip, no border, no fill
    (ux-v2 §3 item 4). */
 .nb .card .card-type {
+  flex: none;
   font-family: var(--nebula-font-mono); font-size: 10px;
   color: var(--nebula-text-tertiary); letter-spacing: 0.03em;
 }
@@ -1400,7 +1403,7 @@ body:has(.nb) { display: block; padding: 0; background: var(--nebula-void); }
 .nb .selo {
   font-family: var(--nebula-font-label); font-size: 8.5px; letter-spacing: 0.08em;
   color: var(--nebula-text-tertiary); border: 1px solid var(--nebula-glass-border);
-  border-radius: var(--oc-radius-pill); padding: 1px 7px;
+  border-radius: var(--oc-radius-pill); padding: 1px 6px;
   /* A badge degrades with an ellipsis before it ever pushes past the card's
      own edge (OCL-84): overflow other than visible is what lets a flex item
      shrink below its own content width. */
@@ -1410,7 +1413,7 @@ body:has(.nb) { display: block; padding: 0; background: var(--nebula-void); }
   font-family: var(--nebula-font-label); font-size: 9.5px;
   letter-spacing: var(--nebula-tracking-wide); text-transform: uppercase;
   border: 1px solid var(--nebula-glass-border); border-radius: var(--oc-radius-pill);
-  padding: 1px 7px; color: var(--nebula-text-secondary);
+  padding: 1px 6px; color: var(--nebula-text-secondary);
 }
 .nb .tag.bug { color: var(--oc-tag-bug-fg); border-color: var(--oc-tag-bug-border); }
 .nb .tag.rfc { color: var(--oc-tag-rfc-fg); border-color: var(--oc-tag-rfc-border); }
@@ -1420,9 +1423,9 @@ body:has(.nb) { display: block; padding: 0; background: var(--nebula-void); }
    (§3) — past that the ellipsis takes over and the full title moves to
    the title attribute, already set where this renders. */
 .nb .card h4 {
-  font-size: 13px; font-weight: var(--nebula-weight-medium);
+  font-size: 12px; font-weight: var(--nebula-weight-medium);
   letter-spacing: var(--nebula-tracking-tight); color: var(--nebula-text-primary);
-  line-height: 1.35; margin-bottom: var(--nebula-space-1);
+  line-height: 1.25; margin-bottom: 2px;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
   overflow: hidden;
 }
@@ -1433,11 +1436,12 @@ body:has(.nb) { display: block; padding: 0; background: var(--nebula-void); }
    ellipsis, the model chain second, and the clock never shrinks, because
    that is why anyone reads this line. */
 .nb .card-foot {
-  display: flex; align-items: center; flex-wrap: nowrap; gap: 5px;
+  display: flex; align-items: center; flex-wrap: nowrap; gap: 4px;
   overflow: hidden;
   border-top: 1px solid var(--nebula-plan-divider);
-  margin-top: var(--nebula-space-1); padding-top: 6px;
+  margin-top: 2px; padding-top: 3px;
   font-family: var(--nebula-font-mono); font-size: 10.5px; color: var(--nebula-text-tertiary);
+  line-height: 1.2;
 }
 .nb .card-foot > * { flex: none; min-width: 0; white-space: nowrap; }
 .nb .card-foot .meta-harness {
@@ -1496,7 +1500,7 @@ body:has(.nb) { display: block; padding: 0; background: var(--nebula-void); }
 .nb .review-chip {
   font-family: var(--nebula-font-label); font-size: 10px; color: var(--oc-chip-review-fg);
   background: var(--oc-chip-review-bg);
-  border: 1px solid var(--oc-chip-review-border); border-radius: var(--oc-radius-pill); padding: 2px 8px;
+  border: 1px solid var(--oc-chip-review-border); border-radius: var(--oc-radius-pill); padding: 1px 6px;
   max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 /* em execução: cantos vivos + borda com a cor de execução, bem de leve */
@@ -3447,7 +3451,7 @@ body:has(.nb) { display: block; padding: 0; background: var(--nebula-void); }
   background: var(--nebula-glass-bg);
   border: 1px solid var(--nebula-glass-border);
   border-radius: var(--nebula-glass-radius);
-  padding: var(--nebula-space-2) var(--nebula-space-4);
+  padding: 6px 10px;
 }
 
 /* ---------- board skeleton ---------- */
@@ -3484,29 +3488,29 @@ body:has(.nb) { display: block; padding: 0; background: var(--nebula-void); }
 .nb .sk-card-body {
   display: flex;
   flex-direction: column;
-  gap: var(--nebula-space-2);
+  gap: var(--nebula-space-1);
 }
 .nb .sk-card-body .sk-id-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: var(--nebula-space-2);
+  gap: var(--nebula-space-1);
 }
 .nb .sk-card-body .sk-id-row .sk-line {
   width: 64px;
   height: 10px;
 }
 .nb .sk-card-body .sk-title {
-  height: 13px;
-  margin: 2px 0;
+  height: 12px;
+  margin: 1px 0;
 }
 .nb .sk-card-body .sk-title.short { width: 70%; }
 .nb .sk-card-body .sk-foot {
   display: flex;
   align-items: center;
-  gap: 5px;
-  margin-top: 4px;
-  padding-top: 6px;
+  gap: 4px;
+  margin-top: 2px;
+  padding-top: 3px;
   border-top: 1px solid var(--nebula-plan-divider);
 }
 .nb .sk-card-body .sk-foot .sk-line {

@@ -18,6 +18,9 @@ describe("executor catalog", () => {
     expect(EXECUTOR_CATALOG).toHaveLength(10);
     expect(new Set(EXECUTOR_CATALOG.map((d) => d.id)).size).toBe(10);
     expect(EXECUTOR_CATALOG.every((d) => d.models.length > 0)).toBe(true);
+    expect(EXECUTOR_CATALOG.find((d) => d.id === "codex")?.models).toContain(
+      "gpt-reserve",
+    );
   });
 });
 

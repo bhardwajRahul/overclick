@@ -194,13 +194,9 @@ export function resolveProjectSelection(
 }
 
 /**
- * Checking and unchecking a project. Under All every box is ticked, so a click
- * there unticks the one clicked and leaves the rest: the box does what a
- * ticked box promises. Narrowing to a single project is the `only` button on
- * the row, which asks for it in so many words instead of hiding it inside a
- * click that looks like unchecking. A selection that ends up empty or covering
- * everything is All again, because an empty board is a state with no way to
- * read it.
+ * Checking and unchecking a project. Clicking a project toggles its inclusion
+ * in the selection. Under All (empty), clicking a project selects that project
+ * alone. Unchecking all projects or checking all projects returns to All.
  */
 export function toggleProject(
   current: string[],
@@ -208,9 +204,8 @@ export function toggleProject(
   projects: { id: string }[],
 ): string[] {
   if (current.length === 0) {
-    const rest = projects.filter((item) => item.id !== projectId);
-    // Unticking the only project there is would empty the board, so All holds.
-    return rest.length === 0 ? [] : rest.map((item) => item.id);
+    if (projects.length <= 1) return [];
+    return [projectId];
   }
   const next = current.includes(projectId)
     ? current.filter((id) => id !== projectId)
@@ -222,8 +217,8 @@ export function toggleProject(
 
 /**
  * Checking and unchecking an organization: the project filter's rule, applied
- * to the control above it. A click under All unticks the one clicked, and
- * `only` is how a caller asks to narrow to a single business.
+ * to the control above it. Under All (empty), clicking one selects that organization.
+ * Unchecking all or checking all returns to All.
  */
 export function toggleOrganization(
   current: string[],
@@ -231,8 +226,8 @@ export function toggleOrganization(
   organizations: { id: string }[],
 ): string[] {
   if (current.length === 0) {
-    const rest = organizations.filter((item) => item.id !== organizationId);
-    return rest.length === 0 ? [] : rest.map((item) => item.id);
+    if (organizations.length <= 1) return [];
+    return [organizationId];
   }
   const next = current.includes(organizationId)
     ? current.filter((id) => id !== organizationId)
