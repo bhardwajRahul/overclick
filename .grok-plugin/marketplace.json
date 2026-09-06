@@ -8,7 +8,7 @@
     {
       "name": "overclick",
       "description": "Claim, execute, and deliver OverClick cards.",
-      "version": "0.3.13",
+      "version": "0.3.14",
       "source": {
         "type": "local",
         "path": "./plugin"

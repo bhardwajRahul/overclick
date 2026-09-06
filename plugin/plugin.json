@@ -1,6 +1,6 @@
 {
   "name": "overclick",
-  "version": "0.3.13",
+  "version": "0.3.14",
   "description": "Run the complete OverClick card workflow from Grok CLI.",
   "author": {
     "name": "OverClick"
