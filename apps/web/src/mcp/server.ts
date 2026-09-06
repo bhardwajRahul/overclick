@@ -11,6 +11,7 @@ import { asc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { invokeTool } from "./tools";
 import type { AuthContext, McpDatabase } from "./types";
+import { APP_VERSION } from "../lib/updates";
 
 // The first sentence disambiguates the two products: field tests burned
 // sessions with agents registering activities in Overclock instead of here.
@@ -189,7 +190,7 @@ export async function createOverclickMcpServer(opts: {
     ),
   ];
   const server = new McpServer(
-    { name: "overclick", version: "0.2.0" },
+    { name: "overclick", version: APP_VERSION },
     { instructions: instructionsWithProjects(projects) },
   );
 

@@ -5,6 +5,7 @@ import { getSession } from "../../lib/cookies";
 import { db } from "../../lib/db";
 import { dict } from "../../lib/i18n";
 import { countUsers } from "../../lib/instance";
+import { APP_VERSION } from "../../lib/updates";
 import { LoginForm } from "./login-form";
 
 export const dynamic = "force-dynamic";
@@ -44,7 +45,7 @@ export default async function LoginPage() {
             <h1>{t.auth.loginTitle}</h1>
             <p className="sub">{t.auth.loginSub}</p>
             <LoginForm lang={ws?.language ?? "en"} />
-            <p className="foot">v0.2.0 · {t.auth.foot}</p>
+            <p className="foot">v{APP_VERSION} · {t.auth.foot}</p>
           </div>
         </div>
       </div>
