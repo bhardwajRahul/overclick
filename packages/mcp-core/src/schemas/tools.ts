@@ -29,6 +29,7 @@ import {
   ProjectDetailSchema,
   ProjectSchema,
   ReadOptionsSchema,
+  ReadIncludeSchema,
   ReviewerSchema,
   StoredTranscriptRefSchema,
   SubtaskCreateSchema,
@@ -659,6 +660,11 @@ const TaskIdSchema = z
 export const TaskGetInputSchema = z.object({
   task_id: TaskIdSchema,
   ...ReadOptionsSchema.shape,
+  include: z.array(z.union([ReadIncludeSchema, z.literal("delivery")])).min(1).max(7).optional(),
+  delivery_limit: z.number().int().min(1).max(20).optional()
+    .describe("Deliveries to return, newest first; default 1. Opts into delivery content."),
+  delivery_offset: z.number().int().nonnegative().optional()
+    .describe("Skip this many deliveries to read earlier attempts; default 0. Opts into delivery content."),
 }).strict();
 
 /**
@@ -679,6 +685,12 @@ export const UsageRecipeSchema = z.object({
 
 export const TaskGetOutputSchema = z.object({
   task: TaskReadSchema,
+  /** Complete artifacts, newest first. Absent from default contract reads. */
+  deliveries: z.array(HandoffSchema).optional(),
+  delivery_limit: z.number().int().positive().optional(),
+  delivery_offset: z.number().int().nonnegative().optional(),
+  deliveries_truncated: z.boolean().optional(),
+  next_delivery_offset: z.number().int().nonnegative().nullable().optional(),
   /** Heavy sections are absent unless the caller requests them. */
   briefing_markdown: z.string().optional(),
   mission: MissionSchema.optional(),

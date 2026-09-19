@@ -2732,7 +2732,9 @@ async function taskGet(
   input: {
     task_id: string;
     view?: ReadOptions["view"];
-    include?: ReadOptions["include"];
+    include?: Array<NonNullable<ReadOptions["include"]>[number] | "delivery">;
+    delivery_limit?: number;
+    delivery_offset?: number;
   },
 ) {
   const found = await findTask(db, ctx.workspaceId, input.task_id);
@@ -2750,9 +2752,52 @@ async function taskGet(
     undefined,
     await countReports(db, found.row),
     undefined,
-    taskReadLayers(input),
+    taskReadLayers({
+      view: input.view,
+      include: input.include?.filter((section) => section !== "delivery"),
+    }),
   );
-  return compactTaskReadPayload(payload);
+  const contract = compactTaskReadPayload(payload);
+  const requested = input.include?.includes("delivery") || input.view === "full"
+    || input.delivery_limit !== undefined || input.delivery_offset !== undefined;
+  if (!requested) return contract;
+
+  const limit = input.delivery_limit ?? 1;
+  const offset = input.delivery_offset ?? 0;
+  const rows = await db.select().from(handoff)
+    .where(eq(handoff.taskId, found.row.id))
+    .orderBy(desc(handoff.createdAt), desc(handoff.id))
+    .limit(limit + 1).offset(offset);
+  const truncated = rows.length > limit;
+  return {
+    ...contract,
+    deliveries: rows.slice(0, limit).map((row) => ({
+      id: row.id,
+      task_id: row.taskId,
+      attempt_id: row.attemptId ?? undefined,
+      summary: row.summary,
+      how_to_verify: row.howToVerify,
+      // Preserve content from the evidence/artifact shapes used by older rows.
+      evidence: row.evidences.map((item) => item.kind === "text"
+        ? { text: item.value } : item.kind === "link" ? { url: item.value } : item),
+      artifacts: row.artifacts.map((item) => "kind" in item ? item : {
+        kind: "file", name: item.name, content: item.content, mime_type: item.mime,
+      }),
+      branch: row.branch,
+      pull_request_url: row.prUrl && /^https?:\/\//.test(row.prUrl) ? row.prUrl : null,
+      commit: row.commitHash,
+      delivery_unverified: row.deliveryUnverified,
+      delivery_verification: row.deliveryVerification,
+      delivery_warning: row.deliveryWarning,
+      usage: row.usage,
+      telemetry_incomplete: isTelemetryIncomplete(row.usage),
+      created_at: iso(row.createdAt),
+    })),
+    delivery_limit: limit,
+    delivery_offset: offset,
+    deliveries_truncated: truncated,
+    next_delivery_offset: truncated ? offset + limit : null,
+  };
 }
 
 /**
