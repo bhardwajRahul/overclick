@@ -163,10 +163,12 @@ describe("MCP tool contracts", () => {
 });
 
 describe("task_list", () => {
-  it("accepts only the caller shorthand for claimed cards", () => {
-    expect(TaskListInputSchema.parse({ claimed_by: "me" })).toEqual({
-      claimed_by: "me",
+  it("requires a session for me and makes the whole token explicit", () => {
+    expect(TaskListInputSchema.parse({ claimed_by: "me", session_id: "session-1" })).toEqual({
+      claimed_by: "me", session_id: "session-1",
     });
+    expect(TaskListInputSchema.safeParse({ claimed_by: "me" }).success).toBe(false);
+    expect(TaskListInputSchema.safeParse({ claimed_by: "token" }).success).toBe(true);
     expect(
       TaskListInputSchema.safeParse({ claimed_by: "another-token" }).success,
     ).toBe(false);

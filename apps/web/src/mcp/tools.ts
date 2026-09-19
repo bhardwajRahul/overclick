@@ -77,6 +77,7 @@ import {
   count,
   desc,
   eq,
+  exists,
   gt,
   inArray,
   isNotNull,
@@ -2579,13 +2580,19 @@ async function taskList(
     status?: CardStatus | CardStatus[];
     priority?: Task["priority"];
     type?: Task["type"];
-    claimed_by?: "me";
+    claimed_by?: "me" | "token";
+    session_id?: string;
+    order?: "oldest" | "newest";
+    offset?: number;
+    created_after?: string;
     awaiting_review_by?: "me" | string;
     limit?: number;
     include?: ListInclude[];
   },
 ) {
   const limit = input.limit ?? DEFAULT_TASK_LIST_LIMIT;
+  const offset = input.offset ?? 0;
+  const order = input.order ?? "oldest";
   const layers = listLayers(input.include);
   const filters = [eq(project.workspaceId, ctx.workspaceId)];
   if (input.project_id) {
@@ -2617,8 +2624,18 @@ async function taskList(
   if (input.resolved_in) filters.push(eq(task.resolvedIn, input.resolved_in));
   if (input.priority) filters.push(eq(task.priority, input.priority));
   if (input.type) filters.push(eq(task.tipo, input.type));
-  if (input.claimed_by === "me") {
-    filters.push(eq(task.claimedByTokenId, ctx.tokenId));
+  if (input.created_after) filters.push(gt(task.createdAt, new Date(input.created_after)));
+  if (input.claimed_by) {
+    filters.push(eq(task.claimedByTokenId, ctx.tokenId), eq(task.status, "em_execucao"));
+  }
+  if (input.session_id) {
+    filters.push(eq(task.status, "em_execucao"), exists(
+      db.select({ id: executionAttempt.id }).from(executionAttempt).where(and(
+        eq(executionAttempt.taskId, task.id),
+        eq(executionAttempt.sessionId, input.session_id),
+        isNull(executionAttempt.finishedAt),
+      )),
+    ));
   }
 
   if (input.awaiting_review_by !== undefined) {
@@ -2649,8 +2666,11 @@ async function taskList(
     .from(task)
     .innerJoin(project, eq(task.projectId, project.id))
     .where(and(...filters))
-    .orderBy(asc(task.createdAt))
-    .limit(limit + 1);
+    .orderBy(
+      order === "newest" ? desc(task.createdAt) : asc(task.createdAt),
+      order === "newest" ? desc(task.id) : asc(task.id),
+    )
+    .limit(limit + 1).offset(offset);
 
   const truncated = rows.length > limit;
   const selected = rows.slice(0, limit);
@@ -2683,6 +2703,9 @@ async function taskList(
   return {
     truncated,
     limit,
+    offset,
+    order,
+    next_offset: truncated ? offset + limit : null,
     tasks: selected.map((row) => {
       const mapped = mapTaskForRead(mapTask(row.task, row.project));
       const costUsd = latestCostByTask.get(mapped.id);

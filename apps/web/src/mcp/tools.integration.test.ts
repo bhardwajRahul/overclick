@@ -2496,7 +2496,7 @@ describe("MCP tool edge cases against a test db", () => {
 
     const listed = await invokeTool(world.db, ctx(), "task_list", {
       status: "em_execucao",
-      claimed_by: "me",
+      claimed_by: "token",
     });
     expect(listed.ok).toBe(true);
     if (!listed.ok) return;

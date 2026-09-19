@@ -11,7 +11,7 @@ import {
   hookCwd,
   hookSession,
   hookTool,
-  mcpCall,
+  sessionClaims,
   parseJson,
   readStdin,
   writeClaimMarker,
@@ -68,12 +68,8 @@ failOpen(async () => {
 
   if (claimMarkerValid(cwd, hookSession(hookInput))) return;
 
-  // No local marker: the board is still the source of truth, so a claim taken
-  // in another session or before the marker existed keeps working.
-  const claims = await mcpCall(
-    "task_list",
-    '{"status":"em_execucao","claimed_by":"me","limit":2}',
-  );
+  // A missing marker can be recovered only from this session's claim.
+  const claims = await sessionClaims(hookInput, 2);
   if (claims && countTasks(claims) > 0) return;
 
   block("claima um card no board antes: task_claim {id}");

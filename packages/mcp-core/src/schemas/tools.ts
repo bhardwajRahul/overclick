@@ -626,20 +626,32 @@ export const TaskListInputSchema = z.object({
   status: z.union([CardStatusSchema, z.array(CardStatusSchema)]).optional(),
   priority: PrioritySchema.optional(),
   type: TaskTypeSchema.optional(),
-  /** Restrict the queue to cards claimed with the caller's MCP token. */
-  claimed_by: z.literal("me").optional(),
+  /** me requires session_id; token explicitly includes all panes sharing the token. */
+  claimed_by: z.enum(["me", "token"]).optional(),
+  session_id: z.string().trim().min(1).optional()
+    .describe("Exact executor session_id from task_claim. Required with claimed_by: me."),
+  order: z.enum(["oldest", "newest"]).optional(),
+  offset: z.number().int().nonnegative().optional(),
+  created_after: z.string().datetime({ offset: true }).optional()
+    .describe("Only cards created strictly after this ISO timestamp."),
   awaiting_review_by: z.union([z.literal("me"), z.string().min(1)]).optional(),
   /**
-   * Cards to return, oldest first. Default 50, at most 200. The whole answer
+   * Cards per page, oldest first unless order is newest. Default 50, at most 200. The whole answer
    * goes into the caller's context, so an unbounded board would spend it on
    * cards nobody asked about.
    */
   limit: z.number().int().min(1).max(200).optional(),
   ...ListOptionsSchema.shape,
-}).strict();
+}).strict().refine(value => value.claimed_by !== "me" || Boolean(value.session_id), {
+  message: "claimed_by: me requires session_id from task_claim; use claimed_by: token to explicitly list all panes sharing the token.",
+  path: ["session_id"],
+});
 
 export const TaskListOutputSchema = z.object({
   tasks: z.array(TaskListItemSchema),
+  offset: z.number().int().nonnegative().optional(),
+  order: z.enum(["oldest", "newest"]).optional(),
+  next_offset: z.number().int().nonnegative().nullable().optional(),
   /**
    * True when the board holds more cards than were returned. Say it out
    * loud: a caller that cannot tell a full answer from a cut one will read

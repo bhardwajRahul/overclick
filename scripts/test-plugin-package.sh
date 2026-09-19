@@ -592,7 +592,10 @@ http
             },
           },
         };
-      } else if (raw.includes("task_list") && !hasClaim()) {
+      } else if (raw.includes("task_list") && (!hasClaim() || (
+        JSON.parse(raw).params.arguments.claimed_by === "me"
+        && JSON.parse(raw).params.arguments.session_id !== "session-fixture"
+      ))) {
         body = { result: { structuredContent: { tasks: [], truncated: false } } };
       } else {
         body = { result: { structuredContent: { tasks: [card], truncated: false } } };
@@ -637,7 +640,7 @@ mkdir -p "$TEST_ROOT/nodeonly"
 ln -s "$(command -v node)" "$TEST_ROOT/nodeonly/node"
 HOOK_PATH="$TEST_ROOT/nodeonly"
 
-snapshot=$(PATH="$HOOK_PATH" OVERCLICK_CONFIG_FILE="$HOOK_CONFIG" node "$REPO_ROOT/plugin/hooks/session-start.mjs")
+snapshot=$(printf '%s' '{"session_id":"session-fixture"}' | PATH="$HOOK_PATH" OVERCLICK_CONFIG_FILE="$HOOK_CONFIG" node "$REPO_ROOT/plugin/hooks/session-start.mjs")
 printf '%s' "$snapshot" | grep -q 'T-1'
 printf '%s' "$snapshot" | grep -q 'OverClick board snapshot'
 
@@ -651,8 +654,13 @@ test -z "$(PATH="$HOOK_PATH" OVERCLICK_CONFIG_FILE="$TEST_ROOT/hook-config-bad-t
 
 test -z "$(PATH="$HOOK_PATH" OVERCLICK_CONFIG_FILE="$HOOK_CONFIG" node "$REPO_ROOT/plugin/hooks/stop-guard.mjs")"
 sed -i.bak 's/enforce_stop=0/enforce_stop=1/' "$HOOK_CONFIG"
-stop_result=$(PATH="$HOOK_PATH" OVERCLICK_CONFIG_FILE="$HOOK_CONFIG" node "$REPO_ROOT/plugin/hooks/stop-guard.mjs")
-printf '%s' "$stop_result" | grep -q '"decision":"block"'
+stop_result=$(printf '%s' '{"session_id":"session-fixture"}' | PATH="$HOOK_PATH" OVERCLICK_CONFIG_FILE="$HOOK_CONFIG" node "$REPO_ROOT/plugin/hooks/stop-guard.mjs")
+printf '%s' "$stop_result" | grep -q '"decision":"block"' || {
+  echo 'stop guard did not identify the current session claim' >&2
+  exit 1
+}
+other_stop=$(printf '%s' '{"session_id":"other-session"}' | PATH="$HOOK_PATH" OVERCLICK_CONFIG_FILE="$HOOK_CONFIG" node "$REPO_ROOT/plugin/hooks/stop-guard.mjs")
+test -z "$other_stop"
 
 sed -i.bak 's/enforce_harness=0/enforce_harness=1/' "$HOOK_CONFIG"
 matching_input='{"tool_input":{"type":"feature","harness":{"cli":"codex","model":"model-fixture","effort":"high"}}}'

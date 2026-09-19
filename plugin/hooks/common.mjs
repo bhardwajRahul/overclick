@@ -152,6 +152,15 @@ export function hookSession(hookInput) {
   return hookInput?.session_id ?? hookInput?.sessionId ?? "";
 }
 
+/** Never infer session ownership from a token shared by several panes. */
+export async function sessionClaims(hookInput, limit) {
+  const sessionId = hookSession(hookInput);
+  if (!sessionId) return "";
+  return mcpCall("task_list", JSON.stringify({
+    status: "em_execucao", claimed_by: "me", session_id: sessionId, limit,
+  }));
+}
+
 // Every key a harness has been seen carrying a shell command under. A shell
 // tool whose command hides under some other key reads as empty here, and an
 // empty command is not proven read-only — so it blocks (OCL-134).
