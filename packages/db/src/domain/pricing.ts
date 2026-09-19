@@ -144,6 +144,7 @@ const p0 = at(MODEL_PRICES_SEEDED_AT);
 const p1 = at(MODEL_PRICES_FAMILIES_SEEDED_AT);
 const p2 = at(MODEL_PRICES_INVENTORY_SEEDED_AT);
 const p3 = at(MODEL_PRICES_CACHE_WRITE_SEEDED_AT);
+const p4 = at("2026-09-19");
 
 /**
  * Public list prices, per million tokens, each row carrying the day it was
@@ -180,6 +181,11 @@ const SEED: SeedPrice[] = [
   // their write column falls back to the input rate instead of guessing —
   // never confirmed, never zeroed.
   p3("gpt-5-6-sol", 4, 20, 0.4, 5),
+  // https://developers.openai.com/api/docs/models/gpt-6-astra (2026-09-19).
+  // Standard short-context rates, as with the other GPT rows. Usage reports
+  // aggregate tokens without request lengths/service tiers, so long-context,
+  // Batch/Flex and Fast-mode multipliers cannot be inferred from them.
+  p4("gpt-6-astra", 10, 50, 1, 12.5),
   // gpt-reserve is a first-class model. Its current internal rate matches
   // Sol, but this is an independent row so the rates can diverge later.
   p3("gpt-reserve", 4, 20, 0.4, 5),

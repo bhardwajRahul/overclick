@@ -245,6 +245,7 @@ describe("seeded price list", () => {
       "claude-opus-5",
       "claude-sonnet-5",
       "gpt-5.6-sol",
+      "gpt-6-astra",
       "gpt-reserve",
       "gpt-5.4-mini",
       "3.1-pro",
@@ -306,6 +307,14 @@ describe("seeded price list", () => {
       cachePerMtok: 0.4,
       cacheWritePerMtok: 5,
     });
+  });
+
+  it("prices Astra using all four published standard token rates (OCL-191)", () => {
+    const result = assessAttemptCost([
+      { model: "gpt-6-astra", input: 100_000, output: 20_000, cache_read: 300_000, cache_write: 40_000 },
+    ], factoryModelPrices(), { tokensReported: true });
+    expect(result).toMatchObject({ costUsd: 2.8, status: "computed", unpricedModels: [] });
+    expect(findModelPrice(factoryModelPrices(), "openai/gpt-6-astra")?.seededAt).toBe("2026-09-19");
   });
 
   it("prices a free tier at zero, which is a price and not a missing one", () => {
