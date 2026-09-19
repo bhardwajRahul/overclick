@@ -1,0 +1,1 @@
+ALTER TABLE "task_comment" ADD COLUMN "reopens" boolean DEFAULT false NOT NULL;

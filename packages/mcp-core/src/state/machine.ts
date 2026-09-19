@@ -64,7 +64,7 @@ const NEXT_STEP: Record<CardEventType, string> = {
   force_claim: "task_claim with force: true",
   handoff: "task_deliver",
   validate: "validation by a human in the board UI",
-  reopen: "reopen with a comment in the board UI",
+  reopen: "task_reopen with a reason, or reopen in the board UI",
   mark_revisado: "task_update with revisado: true",
   desvalidar: "desvalidate by a human in the board UI",
 };
@@ -77,10 +77,10 @@ function invalidTransitionMessage(
     return "Card is open, call task_claim before task_deliver.";
   }
   if (event.type === "handoff" && card.status === "feito") {
-    return "Card is already delivered and waiting for review. To deliver again, reopen it in the board UI and call task_claim first.";
+    return "Card is already delivered and waiting for review. To deliver again, call task_reopen with a reason (or reopen in the board UI), then task_claim.";
   }
   if (event.type === "claim" && card.status === "feito") {
-    return "Card is already delivered and waiting for review, so task_claim is not available. Reopen it in the board UI to work on it again.";
+    return "Card is already delivered and waiting for review, so task_claim is not available. Call task_reopen with a reason (or reopen in the board UI) to work on it again.";
   }
   const steps = VALID_EVENTS[card.status].map((type) => NEXT_STEP[type]);
   return steps.length > 0

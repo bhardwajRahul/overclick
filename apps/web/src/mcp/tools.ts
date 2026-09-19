@@ -608,6 +608,9 @@ async function dispatchTool(
     case "task_update":
       value = await taskUpdate(db, ctx, data as Parameters<typeof taskUpdate>[2]);
       break;
+    case "task_reopen":
+      value = await taskReopen(db, ctx, data as Parameters<typeof taskReopen>[2]);
+      break;
     case "task_deliver":
       value = await taskDeliver(db, ctx, data as Parameters<typeof taskDeliver>[2]);
       break;
@@ -3642,6 +3645,45 @@ async function recordSeenExecutor(
     .where(eq(workspace.id, workspaceId));
 }
 
+async function taskReopen(
+  db: McpDatabase,
+  ctx: AuthContext,
+  input: { task_id: string; reason: string },
+) {
+  return db.transaction(async (tx) => {
+    const found = await findTask(tx, ctx.workspaceId, input.task_id, true);
+    if (!found) return err("NOT_FOUND", `Task ${input.task_id} not found in this workspace.`);
+    const transition = applyTransition({
+      status: found.row.status,
+      revisado: found.row.revisado,
+      reopen_comment: null,
+    }, { type: "reopen", comment: input.reason });
+    if (!transition.ok) return transition;
+
+    const now = new Date();
+    const [updated] = await tx.update(task).set({
+      status: transition.value.status,
+      revisado: transition.value.revisado,
+      validationTicks: [],
+      claimedAt: null,
+      claimedByExecutor: null,
+      claimedByTokenId: null,
+      updatedAt: now,
+    }).where(eq(task.id, found.row.id)).returning();
+    if (!updated) throw new Error("failed to reopen task");
+    await tx.insert(taskComment).values({
+      taskId: updated.id,
+      authorAgentRef: ctx.tokenLabel,
+      kind: "report",
+      reopens: true,
+      body: input.reason,
+    });
+    return taskWriteAck(updated, {
+      status: "aberto", revisado: false, reopen_comment: input.reason, report_recorded: true,
+    });
+  });
+}
+
 async function taskUpdate(
   db: McpDatabase,
   ctx: AuthContext,
@@ -5915,16 +5957,18 @@ async function latestReopenComment(
     .limit(1);
   if (!latestHandoff) return null;
 
-  // Only prose comments qualify: typed timeline entries (executor_swap,
-  // spawn_failure) are traces, not reopen instructions for the next claim.
+  // Keep legacy human reopen comments and explicit MCP rejection reports.
+  // Ordinary agent reports cannot replace the rejection instructions.
   const [comment] = await db
     .select()
     .from(taskComment)
     .where(
       and(
         eq(taskComment.taskId, row.id),
-        eq(taskComment.kind, "comment"),
-        isNotNull(taskComment.authorUserId),
+        or(
+          and(eq(taskComment.kind, "comment"), isNotNull(taskComment.authorUserId)),
+          and(eq(taskComment.kind, "report"), eq(taskComment.reopens, true)),
+        ),
         gt(taskComment.createdAt, latestHandoff.createdAt),
       ),
     )

@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { boolean, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { task } from "./task";
 import { user } from "./user";
 
@@ -14,6 +14,8 @@ export const taskComment = pgTable("task_comment", {
   // Timeline entry type: "comment" is prose; "executor_swap" and
   // "spawn_failure" are typed events the board renders with their own label.
   kind: text("kind").notNull().default("comment"),
+  /** Distinguishes a rejection report from ordinary review/progress reports. */
+  reopens: boolean("reopens").notNull().default(false),
   body: text("body").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()

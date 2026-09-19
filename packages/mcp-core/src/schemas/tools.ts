@@ -902,6 +902,13 @@ export const TaskHeartbeatOutputSchema = z.union([
   TaskHeartbeatFullOutputSchema,
 ]);
 
+export const TaskReopenInputSchema = z.object({
+  task_id: TaskIdSchema,
+  reason: z.string().trim().min(1).describe("Why the delivered card needs another attempt. Recorded as a report and included in the next claim."),
+}).strict();
+
+export const TaskReopenOutputSchema = TaskWriteAckSchema;
+
 export const TaskUpdateInputSchema = z
   .object({
     task_id: TaskIdSchema,
@@ -1596,6 +1603,7 @@ export const MCP_TOOL_NAMES = [
   "task_release",
   "task_heartbeat",
   "task_update",
+  "task_reopen",
   "task_deliver",
   "task_delete",
   "branch_register",
@@ -1712,6 +1720,10 @@ export const toolContracts = {
   task_update: {
     input: TaskUpdateInputSchema,
     output: TaskUpdateOutputSchema,
+  },
+  task_reopen: {
+    input: TaskReopenInputSchema,
+    output: TaskReopenOutputSchema,
   },
   task_deliver: {
     input: TaskDeliverInputSchema,

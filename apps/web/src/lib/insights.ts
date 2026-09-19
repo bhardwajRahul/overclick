@@ -1,4 +1,4 @@
-import { and, eq, isNotNull } from "drizzle-orm";
+import { and, eq, isNotNull, or } from "drizzle-orm";
 import * as BoardDb from "@agent-board/db";
 import {
   areSegmentsPriced,
@@ -245,9 +245,8 @@ export function filterMissionAttempts<
 }
 
 /**
- * Human-authored task comments in the workspace. Today the board writes a
- * human comment in exactly one place, the reopen action, so a comment with an
- * author user is the reopen signal insights needs.
+ * Legacy human reopen comments and explicit MCP rejection reports. Ordinary
+ * agent reports do not count as rejections.
  */
 export async function loadReopenRows(
   db: InsightsDb,
@@ -264,7 +263,7 @@ export async function loadReopenRows(
     .where(
       and(
         eq(project.workspaceId, workspaceId),
-        isNotNull(taskComment.authorUserId),
+        or(isNotNull(taskComment.authorUserId), eq(taskComment.reopens, true)),
       ),
     );
 }

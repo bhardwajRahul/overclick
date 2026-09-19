@@ -53,7 +53,7 @@ describe("model-specific efforts", () => {
 });
 
 describe("MCP tool contracts", () => {
-  it("exports input and output schemas for all 34 tools", () => {
+  it("exports input and output schemas for all 35 tools", () => {
     expect(MCP_TOOL_NAMES).toEqual([
       "organization_list",
       "organization_get",
@@ -81,6 +81,7 @@ describe("MCP tool contracts", () => {
       "task_release",
       "task_heartbeat",
       "task_update",
+      "task_reopen",
       "task_deliver",
       "task_delete",
       "branch_register",

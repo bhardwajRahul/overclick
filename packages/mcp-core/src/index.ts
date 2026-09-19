@@ -271,6 +271,8 @@ export {
   TaskSearchInputSchema,
   TaskSearchOutputSchema,
   TaskUpdateInputSchema,
+  TaskReopenInputSchema,
+  TaskReopenOutputSchema,
   TaskUpdateFullOutputSchema,
   TaskUpdateOutputSchema,
   toolContracts,
