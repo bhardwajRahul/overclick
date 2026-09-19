@@ -76,6 +76,17 @@ describe("price lookup", () => {
     expect(findModelPrice(PRICES, "kimi-for-coding")).toBeNull();
     expect(findModelPrice(PRICES, null)).toBeNull();
   });
+
+  it("keeps Daybreak identity separate while resolving its billing fallback", () => {
+    const prices = factoryModelPrices();
+    expect(normalizeModelKey("openai/gpt-daybreak-blue-latest")).toBe("gpt-daybreak-blue-latest");
+    expect(findModelPrice(prices, "gpt-daybreak-blue-latest")?.model).toBe("gpt-5-6-sol");
+    const custom = { ...findModelPrice(prices, "gpt-5.6-sol")!, model: "gpt-daybreak-blue-latest", inputPerMtok: 7 };
+    expect(findModelPrice([...prices, custom], custom.model)?.inputPerMtok).toBe(7);
+    expect(findModelPrice([...prices, custom], "gpt-5.6-sol")?.inputPerMtok).toBe(4);
+    expect(assessAttemptCost([{ model: custom.model, input: 1_000 }], prices, { tokensReported: true }))
+      .toMatchObject({ status: "computed", costUsd: 0.004, normalizedSegments: [{ model: custom.model, input: 1_000 }] });
+  });
 });
 
 describe("cost arithmetic", () => {

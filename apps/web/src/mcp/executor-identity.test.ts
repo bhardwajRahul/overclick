@@ -22,6 +22,8 @@ describe("executor identity aliases", () => {
   });
 
   it.each([
+    ["gpt-daybreak-blue-latest", "gpt-daybreak-blue-latest"],
+    ["gpt-6-astra", "gpt-6-astra"],
     ["gpt-5-codex", "gpt-5-3-codex-spark"],
     ["claude-opus-5", "opus-5"],
     ["claude-fable-5", "fable-5"],
@@ -71,6 +73,11 @@ describe("executor identity aliases", () => {
     expect(unregisteredClaimModelRefusal("codex", "gpt-5-codex", executors)).toBeNull();
     expect(unregisteredClaimModelRefusal("grok", "grok-4.6", executors)).toBeNull();
     expect(unregisteredClaimModelRefusal("codex", undefined, executors)).toBeNull();
+  });
+
+  it("does not accept Daybreak merely because Sol is registered", () => {
+    expect(unregisteredClaimModelRefusal("codex", "gpt-daybreak-blue-latest", executors)).toBeTruthy();
+    expect(isExecutorPairConfigured(executors, "codex", "gpt-daybreak-blue-latest")).toBe(false);
   });
 
   it("leaves generic placeholder labels alone: resolveClaimExecutor handles those", () => {

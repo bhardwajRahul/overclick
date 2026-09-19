@@ -52,8 +52,8 @@ export function isGenericModelLabel(model: string | null | undefined): boolean {
 /**
  * Resolves the executor identity stored by task_claim.
  *
- * Exact declarations are canonicalized through the same alias helper usage
- * pricing uses. Generic declarations inherit the card harness. Codex's two
+ * Exact declarations canonicalize spelling aliases, never billing aliases.
+ * Generic declarations inherit the card harness. Codex's two
  * legacy labels also have a safe no-harness fallback confirmed by the owner.
  */
 export function resolveClaimExecutor(

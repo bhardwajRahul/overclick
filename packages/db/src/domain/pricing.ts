@@ -81,9 +81,12 @@ export const MODEL_KEY_ALIASES: Readonly<Record<string, string>> = {
   // Gemini keys in the seed drop the vendor prefix, same as Claude.
   "gemini-3-7-flash-high": "3-7-flash-high",
   "gemini-3-1-flash-image-preview": "3-1-flash-image-preview",
-  // developers.openai.com/api/docs/pricing (read 2026-09-01): this Codex
-  // --model is an alias that currently points to gpt-5.6-sol, not a
-  // separately priced model.
+};
+
+/** Shared billing rates do not make two runtime identities interchangeable. */
+const MODEL_PRICE_ALIASES: Readonly<Record<string, string>> = {
+  // Retain the board's seeded Daybreak tariff policy from 2026-09-01.
+  // A workspace's explicit Daybreak rate takes precedence over this fallback.
   "gpt-daybreak-blue-latest": "gpt-5-6-sol",
 };
 
@@ -245,10 +248,8 @@ const SEED: SeedPrice[] = [
   // Claude Sonnet 4.6, Anthropic public list, cache write confirmed 2026-09-01
   // alongside the rest of the Claude family above (1.25x input at 5-minute TTL).
   p3("sonnet-4-6", 3, 15, 0.3, 3.75),
-  // Codex Daybreak Blue has no row of its own: developers.openai.com/api/docs/pricing
-  // (read 2026-09-01) states plainly that gpt-daybreak-blue-latest is an
-  // alias that currently points to gpt-5.6-sol, so it prices as that row via
-  // MODEL_KEY_ALIASES instead of carrying its own (previously stale) number.
+  // Daybreak uses Sol's seeded tariff through MODEL_PRICE_ALIASES only.
+  // Its identity is preserved on executors, usage segments and Insights.
   // Free tiers. A published zero is a price, and it is not the same thing as
   // a model nobody priced: this row says the run really cost nothing,
   // writing to cache included.
@@ -324,7 +325,12 @@ export function findModelPrice<T extends ModelPrice>(
   if (!model) return null;
   const key = normalizeModelKey(model);
   if (!key) return null;
-  return prices.find((price) => normalizeModelKey(price.model) === key) ?? null;
+  const exact = prices.find((price) => normalizeModelKey(price.model) === key);
+  if (exact) return exact;
+  const priceKey = MODEL_PRICE_ALIASES[key];
+  return priceKey
+    ? prices.find((price) => normalizeModelKey(price.model) === priceKey) ?? null
+    : null;
 }
 
 export type TokenCounts = {
