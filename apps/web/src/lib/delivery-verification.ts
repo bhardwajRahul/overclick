@@ -8,6 +8,8 @@ const execFile = promisify(execFileCallback);
 
 /** Stable copy shown to a reviewer when a delivery cannot be proved remote. */
 export const DELIVERY_UNVERIFIED_WARNING = "commit não encontrado no remoto";
+const CHECK_UNAVAILABLE_WARNING =
+  "não foi possível verificar o remoto; confira o acesso ao repositório e tente novamente";
 
 export type DeliveryVerificationStatus = "verified" | "unverified" | null;
 
@@ -22,6 +24,7 @@ type JsonRecord = Record<string, unknown>;
 type VerifyDependencies = {
   fetch?: typeof fetch;
   git?: (args: string[]) => Promise<string>;
+  githubToken?: string | null;
 };
 
 const VERIFIED: DeliveryVerificationResult = {
@@ -36,11 +39,11 @@ const NOT_CHECKED: DeliveryVerificationResult = {
   warning: null,
 };
 
-function unverified(): DeliveryVerificationResult {
+function unverified(warning = DELIVERY_UNVERIFIED_WARNING): DeliveryVerificationResult {
   return {
     status: "unverified",
     unverified: true,
-    warning: DELIVERY_UNVERIFIED_WARNING,
+    warning,
   };
 }
 
@@ -85,13 +88,13 @@ function githubRepository(repoUrl: string): { owner: string; repo: string } | nu
   }
 }
 
-function githubHeaders(): HeadersInit {
+function githubHeaders(workspaceToken?: string | null): HeadersInit {
   const headers: Record<string, string> = {
     accept: "application/vnd.github+json",
   };
   // The token is read for the request only and is never part of a returned
   // error or diagnostic. Public repositories work without it.
-  const token = process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN;
+  const token = workspaceToken?.trim() || process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
   if (token) headers.authorization = `Bearer ${token}`;
   return headers;
 }
@@ -99,16 +102,17 @@ function githubHeaders(): HeadersInit {
 async function githubJson(
   url: string,
   fetchImpl: typeof fetch,
-): Promise<JsonRecord | null> {
+  token?: string | null,
+): Promise<{ status: number; body: JsonRecord | null }> {
   try {
     const response = await fetchImpl(url, {
-      headers: githubHeaders(),
+      headers: githubHeaders(token),
       signal: AbortSignal.timeout(8_000),
     });
-    if (!response.ok) return null;
-    return asRecord(await response.json());
+    if (!response.ok) return { status: response.status, body: null };
+    return { status: response.status, body: asRecord(await response.json()) };
   } catch {
-    return null;
+    return { status: 0, body: null };
   }
 }
 
@@ -117,33 +121,48 @@ async function verifyGithub(
   commit: string,
   branch: string,
   fetchImpl: typeof fetch,
+  token?: string | null,
 ): Promise<DeliveryVerificationResult> {
   const root = `https://api.github.com/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}`;
   const commitRow = await githubJson(
     `${root}/commits/${encodeURIComponent(commit)}`,
     fetchImpl,
+    token,
   );
-  const commitSha = asSha(commitRow?.sha);
-  if (!commitSha || !matchesSha(commitSha, commit)) return unverified();
+  const commitSha = asSha(commitRow.body?.sha);
+  if (!commitSha || !matchesSha(commitSha, commit)) {
+    // A private repository without access is also a 404. Only call the
+    // commit missing after proving that this credential can see the repo.
+    if (commitRow.status === 404 || commitRow.status === 422) {
+      const repository = await githubJson(root, fetchImpl, token);
+      if (repository.status === 200 && repository.body) return unverified();
+    }
+    return unverified(CHECK_UNAVAILABLE_WARNING);
+  }
 
   const branchName = normalizedBranch(branch);
   if (!branchName) return unverified();
   const branchRow = await githubJson(
     `${root}/branches/${encodeURIComponent(branchName)}`,
     fetchImpl,
+    token,
   );
-  const branchSha = asSha(asRecord(branchRow?.commit)?.sha ?? branchRow?.sha);
+  if (branchRow.status === 404) return unverified();
+  const branchSha = asSha(asRecord(branchRow.body?.commit)?.sha ?? branchRow.body?.sha);
   if (matchesSha(branchSha, commitSha)) return VERIFIED;
-  if (!branchSha) return unverified();
+  if (!branchSha) return unverified(CHECK_UNAVAILABLE_WARNING);
 
   // A branch may have moved on since the delivered commit. GitHub's compare
   // endpoint answers the ancestry question without cloning the repository.
   const comparison = await githubJson(
     `${root}/compare/${encodeURIComponent(commit)}...${encodeURIComponent(branchName)}`,
     fetchImpl,
+    token,
   );
-  const status = comparison?.status;
-  return status === "ahead" || status === "identical" ? VERIFIED : unverified();
+  const status = comparison.body?.status;
+  if (status === "ahead" || status === "identical") return VERIFIED;
+  if (status === "behind" || status === "diverged") return unverified();
+  return unverified(CHECK_UNAVAILABLE_WARNING);
 }
 
 async function defaultGit(args: string[]): Promise<string> {
@@ -251,7 +270,7 @@ export async function verifyDelivery(
 
   const github = githubRepository(repoUrl);
   if (github) {
-    return verifyGithub(github, commit, branch, dependencies.fetch ?? fetch);
+    return verifyGithub(github, commit, branch, dependencies.fetch ?? fetch, dependencies.githubToken);
   }
   return verifyGeneric(repoUrl, commit, branch, dependencies.git ?? defaultGit);
 }

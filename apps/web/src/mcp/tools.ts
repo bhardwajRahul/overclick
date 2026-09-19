@@ -4424,11 +4424,16 @@ async function taskDeliver(
   // the advisory unverified case the board needs to surface.
   const deliveryCommit = input.commit?.trim() || null;
   const deliveryBranch = input.branch?.trim() || preview.row.branch || null;
+  const [verificationWorkspace] = await db
+    .select({ githubToken: workspace.githubToken })
+    .from(workspace)
+    .where(eq(workspace.id, ctx.workspaceId))
+    .limit(1);
   const deliveryVerification: DeliveryVerificationResult = await verifyDelivery({
     repoUrl: preview.proj.repoUrl,
     commit: deliveryCommit,
     branch: deliveryBranch,
-  });
+  }, { githubToken: verificationWorkspace?.githubToken });
 
   const persisted = await db.transaction(async (tx) => {
     const found = await findTask(tx, ctx.workspaceId, input.task_id, true);

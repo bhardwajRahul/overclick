@@ -45,14 +45,16 @@ describe("verifyDelivery", () => {
     ).resolves.toEqual({ status: "verified", unverified: false, warning: null });
   });
 
-  it("accepts a fake commit but marks the delivery unverified", async () => {
+  it.each([404, 422])("accepts a fake commit but marks the delivery unverified (%s)", async (status) => {
     const result = await verifyDelivery(
       {
         repoUrl: "https://github.com/example/board",
         commit: "deadbeef",
         branch: "main",
       },
-      { fetch: async () => response({ message: "Not Found" }, false) },
+      { fetch: async (url) => String(url).includes("/commits/")
+        ? Response.json({ message: "No commit found" }, { status })
+        : response({ id: 1 }) },
     );
 
     expect(result).toEqual({
@@ -73,6 +75,25 @@ describe("verifyDelivery", () => {
       unverified: true,
       warning: DELIVERY_UNVERIFIED_WARNING,
     });
+  });
+
+  it.each([401, 403, 404, 429, 500, 503])("does not report an absent commit when GitHub is inaccessible (%s)", async (status) => {
+    const result = await verifyDelivery(
+      { repoUrl: ["https:/", "github.com", "example", "private-repo"].join("/"), commit: "832022f5f", branch: "feat/motion-dna" },
+      { fetch: async () => Response.json({ message: "Unavailable" }, { status }) },
+    );
+    expect(result.unverified).toBe(true);
+    expect(result.warning).not.toBe(DELIVERY_UNVERIFIED_WARNING);
+    expect(result.warning).toContain("não foi possível verificar");
+  });
+
+  it("does not report an absent commit after a network failure", async () => {
+    const result = await verifyDelivery(
+      { repoUrl: ["https:/", "github.com", "example", "repo"].join("/"), commit: "832022f5f", branch: "main" },
+      { fetch: async () => { throw new Error("network unavailable"); } },
+    );
+    expect(result.unverified).toBe(true);
+    expect(result.warning).toContain("não foi possível verificar");
   });
 
   it("uses ls-remote and an ancestry check for a generic remote", async () => {
