@@ -65,8 +65,19 @@ node scripts/release-manifests.mjs write "$VERSION"
 echo "==> checking the bump against the tag it is about to get"
 scripts/verify-release-version.sh "v${VERSION}"
 
-git add --update
-printf 'release: v%s\n\n%s\n' "$VERSION" "$NOTES" | git commit -q -F -
+MANIFEST_TABLE="$(node scripts/release-manifests.mjs read)"
+MANIFEST_PATHS=()
+while IFS=$'\t' read -r manifest_path _; do
+  [ -n "$manifest_path" ] && MANIFEST_PATHS+=("$manifest_path")
+done <<< "$MANIFEST_TABLE"
+if [ "${#MANIFEST_PATHS[@]}" -eq 0 ]; then
+  echo "!! no release manifests found" >&2
+  exit 1
+fi
+
+git add -- "${MANIFEST_PATHS[@]}"
+printf '%s v%s\n\n%s\n' "${RELEASE_COMMIT_PREFIX:-release:}" "$VERSION" "$NOTES" |
+  git commit -q -F - -- "${MANIFEST_PATHS[@]}"
 git tag "v${VERSION}"
 
 echo "==> pushing main and v${VERSION}"
