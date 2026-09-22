@@ -32,7 +32,7 @@ export function canTransition(
   }
 
   if (from === "feito" && to === "validado") {
-    return actor === "human";
+    return actor === "human" || options.hasComment === true;
   }
 
   if (from === "validado" && to === "feito") {

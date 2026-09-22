@@ -470,14 +470,14 @@ export const TaskSummarySchema = z.object({
 });
 
 /**
- * A prose comment or delivery report attached to a card, in the order they
- * were written. Typed timeline events (executor swaps, stale-claim
+ * A prose comment, delivery report, or cited validation attached to a card,
+ * in the order they were written. Typed timeline events (executor swaps, stale-claim
  * takeovers) are operational traces, not contract corrections, and are left
  * out: this is only what a human or agent deliberately said about the card.
  */
 export const TaskCommentSchema = z.object({
   author: z.string().min(1),
-  kind: z.enum(["comment", "report"]),
+  kind: z.enum(["comment", "report", "validation"]),
   body: z.string().min(1),
   created_at: IsoDateTimeSchema,
 });

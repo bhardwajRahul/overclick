@@ -26,7 +26,7 @@ export type CardEvent =
   | { type: "claim" }
   | { type: "force_claim" }
   | { type: "handoff" }
-  | { type: "validate"; actor: "human" | "agent" }
+  | { type: "validate"; actor: "human" | "agent"; comment?: string }
   | { type: "reopen"; comment: string }
   | { type: "mark_revisado" }
   | { type: "desvalidar"; actor: "human" | "agent" };
@@ -63,7 +63,7 @@ const NEXT_STEP: Record<CardEventType, string> = {
   claim: "task_claim",
   force_claim: "task_claim with force: true",
   handoff: "task_deliver",
-  validate: "validation by a human in the board UI",
+  validate: "validation in the board UI, or task_update with status: validado and a citation of the human's approval",
   reopen: "task_reopen with a reason, or reopen in the board UI",
   mark_revisado: "task_update with revisado: true",
   desvalidar: "desvalidate by a human in the board UI",
@@ -99,7 +99,7 @@ export function isValidTransition(
   if (event.type === "reopen" && isBlank(event.comment)) {
     return false;
   }
-  if (event.type === "validate" && event.actor !== "human") {
+  if (event.type === "validate" && event.actor === "agent" && isBlank(event.comment ?? "")) {
     return false;
   }
   if (event.type === "desvalidar" && event.actor !== "human") {
@@ -134,10 +134,10 @@ export function applyTransition(
     );
   }
 
-  if (event.type === "validate" && event.actor !== "human") {
+  if (event.type === "validate" && event.actor === "agent" && isBlank(event.comment ?? "")) {
     return err(
-      "VALIDATION_HUMAN_ONLY",
-      "Only a human in the board UI can mark the card as validated.",
+      "INVALID_ARGUMENT",
+      "Agent validation requires a citation of the human's approval: who validated and what they said.",
       { from: card.status, event: event.type, actor: event.actor },
     );
   }

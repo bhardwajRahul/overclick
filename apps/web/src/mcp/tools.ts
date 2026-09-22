@@ -3767,7 +3767,7 @@ async function taskUpdate(
     usage?: Usage;
     spawn_failure?: string;
     resolved_in?: string | null;
-    status?: "descartado";
+    status?: "descartado" | "validado";
     superseded_by?: string;
     return?: "ack" | "full";
   },
@@ -3778,6 +3778,53 @@ async function taskUpdate(
       "NOT_FOUND",
       `Task ${input.task_id} not found in this workspace. Call task_list to see the available cards.`,
     );
+  }
+
+  if (input.status === "validado") {
+    const validated = await db.transaction(async (tx) => {
+      const current = await findTask(tx, ctx.workspaceId, input.task_id, true);
+      if (!current) {
+        return err("NOT_FOUND", `Task ${input.task_id} not found in this workspace.`);
+      }
+      const transition = applyTransition(
+        {
+          status: current.row.status,
+          revisado: current.row.revisado,
+          reopen_comment: await latestReopenComment(tx, current.row),
+        },
+        { type: "validate", actor: "agent", comment: input.comment },
+      );
+      if (!transition.ok) return transition;
+      const [updated] = await tx
+        .update(task)
+        .set({ status: "validado", revisado: true })
+        .where(eq(task.id, current.row.id))
+        .returning();
+      if (!updated) throw new Error("failed to validate task");
+      await tx.insert(taskComment).values({
+        taskId: updated.id,
+        authorAgentRef: ctx.tokenLabel,
+        kind: "validation",
+        body: input.comment!.trim(),
+      });
+      return ok(updated);
+    });
+    if (!validated.ok) return validated;
+    const updated = validated.value;
+    if (input.return !== "full") {
+      return taskWriteAck(updated, {
+        status: "validado", revisado: true, comment: input.comment!.trim(),
+      });
+    }
+    const latestUsageGuard = await latestUsageGuardForTask(db, updated.id);
+    return {
+      task: mapTask(updated, found.proj, {
+        reopenComment: await latestReopenComment(db, updated),
+        reportsCount: await countReports(db, updated),
+      }),
+      usage_suspect: latestUsageGuard.suspect,
+      usage_suspect_reason: latestUsageGuard.reason,
+    };
   }
 
   let nextRow = found.row;
@@ -5860,7 +5907,7 @@ async function countReports(db: McpDatabase, row: TaskRow): Promise<number> {
 }
 
 /**
- * Every prose comment or delivery report on a card, oldest first — the
+ * Every prose comment, delivery report, or cited validation on a card, oldest first — the
  * corrections the owner makes to a contract after the card was created.
  * Typed timeline events (executor_swap, claim_stale, claim_release,
  * spawn_failure) are operational traces, not contract text, so they are
@@ -5883,13 +5930,13 @@ async function listTaskComments(
     .where(
       and(
         eq(taskComment.taskId, taskId),
-        inArray(taskComment.kind, ["comment", "report"]),
+        inArray(taskComment.kind, ["comment", "report", "validation"]),
       ),
     )
     .orderBy(asc(taskComment.createdAt));
   return rows.map((row) => ({
     author: row.authorAgentRef ?? row.authorEmail ?? "desconhecido",
-    kind: row.kind === "report" ? "report" : "comment",
+    kind: row.kind === "report" ? "report" : row.kind === "validation" ? "validation" : "comment",
     body: row.body,
     created_at: iso(row.createdAt),
   }));

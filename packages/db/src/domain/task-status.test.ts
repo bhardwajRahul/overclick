@@ -40,9 +40,10 @@ describe("task status machine (spec §3.1)", () => {
     ).toBe(false);
   });
 
-  it("allows human-only validation: feito → validado", () => {
+  it("allows human validation and cited agent registration: feito → validado", () => {
     expect(canTransition("feito", "validado", "human")).toBe(true);
     expect(canTransition("feito", "validado", "agent")).toBe(false);
+    expect(canTransition("feito", "validado", "agent", { hasComment: true })).toBe(true);
   });
 
   it("allows a human (or force claim) to reopen a stuck attempt: em_execucao → aberto", () => {

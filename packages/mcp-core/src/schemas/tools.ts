@@ -982,8 +982,8 @@ export const TaskUpdateInputSchema = z
      * null clears it. Empty string is refused: send null to clear.
      */
     resolved_in: ReleaseVersionSchema.nullable().optional(),
-    /** Discard an in-execution card, optionally linking its existing continuation. */
-    status: z.literal("descartado").optional(),
+    /** Validate a delivered card with a citation of the human's approval, or discard an in-execution card. */
+    status: z.enum(["descartado", "validado"]).optional(),
     superseded_by: TaskIdSchema.optional(),
     /** Mutations are compact by default; request the complete card explicitly. */
     return: WriteReturnSchema.optional(),
@@ -1003,7 +1003,7 @@ export const TaskUpdateInputSchema = z
       value.superseded_by !== undefined,
     {
       message:
-        "provide comment, progress, revisado, mission_id, project_id, harness, usage, spawn_failure, resolved_in, or status descartado",
+        "provide comment, progress, revisado, mission_id, project_id, harness, usage, spawn_failure, resolved_in, or status",
     },
   )
   .refine(
@@ -1013,6 +1013,15 @@ export const TaskUpdateInputSchema = z
   .refine(
     (value) => value.status !== undefined || value.superseded_by === undefined,
     { message: "superseded_by requires status: descartado", path: ["superseded_by"] },
+  )
+  .refine(
+    (value) => value.status !== "validado" || Boolean(value.comment?.trim()),
+    { message: "status: validado requires a citation of the human's approval: who validated and what they said", path: ["comment"] },
+  )
+  .refine(
+    (value) => value.status !== "validado" ||
+      Object.keys(value).every((key) => ["task_id", "status", "comment", "return"].includes(key)),
+    { message: "status: validado only accepts task_id, comment and return; send other updates separately", path: ["status"] },
   );
 
 /** One card's short id before and after a move between projects. */

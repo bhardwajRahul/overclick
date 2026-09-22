@@ -57,7 +57,7 @@ describe("MCP rejection and reclaim (OCL-187)", () => {
     expect(await world.db.select().from(executionAttempt).where(eq(executionAttempt.taskId, card.id))).toHaveLength(2);
   });
 
-  it("requires a reason and cannot validate a card or cross a workspace", async () => {
+  it("requires a reopen reason and refuses uncited validation or cross-workspace access", async () => {
     const card = await deliveredCard();
     for (const reason of [undefined, "", "  "]) {
       expect((await invokeTool(world.db, ctx(), "task_reopen", { task_id: card.id, reason })).ok).toBe(false);

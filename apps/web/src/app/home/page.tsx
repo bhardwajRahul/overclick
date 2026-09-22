@@ -284,6 +284,7 @@ function toBoardCard(
         c.kind === "spawn_failure" ||
         c.kind === "report" ||
         c.kind === "comment" ||
+        c.kind === "validation" ||
         c.kind === "claim_release" ||
         c.kind === "claim_stale",
     )
@@ -293,6 +294,7 @@ function toBoardCard(
         | "spawn_failure"
         | "report"
         | "comment"
+        | "validation"
         | "claim_release"
         | "claim_stale",
       body: c.body,

@@ -937,6 +937,23 @@ describe("task_deliver usage and artifacts", () => {
     expect(correct.success).toBe(true);
   });
 
+  it("accepts cited validation and asks for a human citation otherwise", () => {
+    expect(TaskUpdateInputSchema.safeParse({
+      task_id: "AGB-1", status: "validado",
+      comment: "Dono validou ao vivo: 'ok, funcionou'",
+    }).success).toBe(true);
+    for (const comment of [undefined, "", "   "]) {
+      const result = TaskUpdateInputSchema.safeParse({
+        task_id: "AGB-1", status: "validado", comment,
+      });
+      expect(result.success).toBe(false);
+      if (!result.success) expect(result.error.message).toMatch(/cit.*human/i);
+    }
+    expect(TaskUpdateInputSchema.safeParse({
+      task_id: "AGB-1", status: "descartado", superseded_by: "AGB-2",
+    }).success).toBe(true);
+  });
+
   it("keeps every tool contract strict, so no surface drifts back", () => {
     for (const name of MCP_TOOL_NAMES) {
       // A schema can carry several refinements, and each one wraps the

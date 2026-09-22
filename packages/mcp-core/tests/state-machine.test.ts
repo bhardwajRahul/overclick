@@ -239,14 +239,27 @@ describe("card state machine", () => {
     }
   });
 
-  it("rejects agent validation — validado is a human stamp", () => {
+  it("allows an agent to register a cited human validation", () => {
     const result = applyTransition(card({ status: "feito" }), {
       type: "validate",
       actor: "agent",
+      comment: "Dono validou ao vivo: 'ok, funcionou'",
     });
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.error.code).toBe("VALIDATION_HUMAN_ONLY");
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.status).toBe("validado");
+    }
+  });
+
+  it("requires the citation when an agent registers validation", () => {
+    for (const comment of [undefined, "", " \n "]) {
+      const result = applyTransition(card({ status: "feito" }), {
+        type: "validate",
+        actor: "agent",
+        comment,
+      });
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.message).toMatch(/cit.*human/i);
     }
   });
 

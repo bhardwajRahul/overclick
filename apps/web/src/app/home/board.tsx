@@ -90,6 +90,7 @@ export type TimelineEntry = {
     | "spawn_failure"
     | "report"
     | "comment"
+    | "validation"
     | "claim_release"
     | "claim_stale";
   body: string;
@@ -1296,13 +1297,15 @@ function Detail({
                         ? t.detail.spawnFailure
                         : entry.kind === "claim_release"
                           ? t.detail.claimRelease
-                          : entry.kind === "claim_stale"
-                            ? t.detail.claimStale
-                        : entry.kind === "report"
-                          ? t.detail.report
-                          : entry.kind === "comment"
-                            ? t.detail.report
-                            : t.detail.executorSwap}
+                        : entry.kind === "claim_stale"
+                          ? t.detail.claimStale
+                          : entry.kind === "validation"
+                            ? t.detail.validationByAgent
+                            : entry.kind === "report"
+                              ? t.detail.report
+                              : entry.kind === "comment"
+                                ? t.detail.report
+                                : t.detail.executorSwap}
                     </span>{" "}
                     <Markdown inline text={entry.body} />
                     <span className="d-tl-meta">
