@@ -989,7 +989,12 @@ export const TaskUpdateInputSchema = z
      * null clears it. Empty string is refused: send null to clear.
      */
     resolved_in: ReleaseVersionSchema.nullable().optional(),
-    /** Validate a delivered card with a citation of the human's approval, or discard an in-execution card. */
+    /**
+     * Validate a delivered card with a citation of the human's approval, or
+     * discard a card with the reason in comment (OCL-203): open, delivered, or
+     * in execution under the caller's own claim, an expired one, or with
+     * superseded_by naming its continuation.
+     */
     status: z.enum(["descartado", "validado"]).optional(),
     superseded_by: TaskIdSchema.optional(),
     /** Mutations are compact by default; request the complete card explicitly. */
@@ -1020,6 +1025,17 @@ export const TaskUpdateInputSchema = z
   .refine(
     (value) => value.status !== undefined || value.superseded_by === undefined,
     { message: "superseded_by requires status: descartado", path: ["superseded_by"] },
+  )
+  .refine(
+    (value) =>
+      value.status !== "descartado" ||
+      Boolean(value.comment?.trim()) ||
+      value.superseded_by !== undefined,
+    {
+      message:
+        "status: descartado requires comment with the reason the card is being discarded, unless superseded_by names the card that continues it",
+      path: ["comment"],
+    },
   )
   .refine(
     (value) => value.status !== "validado" || Boolean(value.comment?.trim()),

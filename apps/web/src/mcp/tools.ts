@@ -34,6 +34,7 @@ import {
   applyContextOps,
   applyTransition,
   branchConvention,
+  discardRefusal,
   err,
   evaluateClaim,
   isMcpCoreError,
@@ -45,6 +46,7 @@ import {
   type CardExecutor,
   type CardStatus,
   type ContextOp,
+  type DiscardCheck,
   type Harness,
   type ListInclude,
   type McpToolName,
@@ -3750,13 +3752,6 @@ async function taskUpdate(
       if (!original) {
         return err("NOT_FOUND", `Task ${input.task_id} not found in this workspace.`);
       }
-      if (original.row.status !== "em_execucao") {
-        return err(
-          "INVALID_ARGUMENT",
-          `${original.row.shortId} cannot be discarded because it is ${original.row.status}; only a card in execution can be superseded.`,
-        );
-      }
-
       let continuation: TaskRow | null = null;
       if (input.superseded_by) {
         const foundContinuation = await findTask(
@@ -3785,13 +3780,57 @@ async function taskUpdate(
           );
         }
       }
+
+      // One rule for the board UI and MCP (OCL-203): an open or delivered card
+      // can go, and so can one in execution unless another executor is still
+      // renewing a live claim on it. The refusal says who holds it and what to
+      // do first, instead of a bare "no".
+      let claim: DiscardCheck["claim"];
+      if (original.row.status === "em_execucao") {
+        const [openAttempt] = await tx
+          .select({ lastActivityAt: executionAttempt.lastActivityAt })
+          .from(executionAttempt)
+          .where(
+            and(
+              eq(executionAttempt.taskId, original.row.id),
+              isNull(executionAttempt.finishedAt),
+            ),
+          )
+          .orderBy(desc(executionAttempt.startedAt))
+          .limit(1);
+        const [ws] = await tx
+          .select({ claimTimeoutMinutes: workspace.claimTimeoutMinutes })
+          .from(workspace)
+          .where(eq(workspace.id, ctx.workspaceId))
+          .limit(1);
+        const lastActivity =
+          openAttempt?.lastActivityAt ?? original.row.claimedAt ?? null;
+        claim = {
+          ownedByCaller: original.row.claimedByTokenId === ctx.tokenId,
+          stale: lastActivity
+            ? isClaimStale(lastActivity, ws?.claimTimeoutMinutes)
+            : true,
+          holder: original.row.claimedByExecutor,
+          lastActivityAt: lastActivity ? iso(lastActivity) : null,
+          expiresAt: lastActivity
+            ? iso(claimExpiresAt(lastActivity, ws?.claimTimeoutMinutes))
+            : null,
+        };
+      }
+      const refusal = discardRefusal({
+        shortId: original.row.shortId,
+        status: original.row.status,
+        continues: continuation !== null,
+        ...(claim ? { claim } : {}),
+      });
+      if (refusal) return err("INVALID_TRANSITION", refusal);
+
       return discardSupersededTask(
         tx,
         original.row,
         continuation,
-        continuation
-          ? `superseded by ${continuation.shortId}`
-          : "discarded without continuation",
+        input.comment?.trim() ||
+          (continuation ? `superseded by ${continuation.shortId}` : "discarded"),
       );
     });
     if (!discarded.ok) return discarded;
@@ -3959,8 +3998,13 @@ async function taskUpdate(
   }
 
   const commentKind = input.comment_kind ?? "comment";
+  // A discard's comment is its reason: it lands on the timeline saying so.
+  const commentBody =
+    input.comment && input.status === "descartado"
+      ? `Discarded: ${input.comment.trim()}`
+      : input.comment;
   const bodies = [
-    ...(input.comment ? [{ kind: commentKind, body: input.comment }] : []),
+    ...(commentBody ? [{ kind: commentKind, body: commentBody }] : []),
     ...(input.progress ? [{ kind: "comment", body: `progresso: ${input.progress}` }] : []),
   ];
 
