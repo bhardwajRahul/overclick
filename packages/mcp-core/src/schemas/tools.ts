@@ -28,6 +28,7 @@ import {
   ProjectContextSourceSchema,
   ProjectDetailSchema,
   ProjectSchema,
+  ProjectSummarySchema,
   ReadOptionsSchema,
   ReadIncludeSchema,
   ReviewerSchema,
@@ -446,11 +447,28 @@ const ProjectRefSchema = z
 
 export const ProjectListInputSchema = z.object({
   organization: OrganizationRefSchema.optional(),
+  view: z
+    .enum(["summary", "full"])
+    .optional()
+    .describe(
+      "Default summary: id_prefix, name and repo_url. full: every field.",
+    ),
 }).strict();
 
-export const ProjectListOutputSchema = z.object({
+export const ProjectListFullOutputSchema = z.object({
   projects: z.array(ProjectSchema),
 });
+
+export const ProjectListSummaryOutputSchema = z.object({
+  projects: z.array(ProjectSummarySchema),
+});
+
+// The full shape goes first: the summary schema would accept a full row and
+// strip it down to three fields.
+export const ProjectListOutputSchema = z.union([
+  ProjectListFullOutputSchema,
+  ProjectListSummaryOutputSchema,
+]);
 
 export const PROJECT_CONTEXT_MAX_CHARS = 32_000;
 
@@ -790,13 +808,26 @@ export const TaskSearchOutputSchema = z.object({
  * Workspace is resolved from the MCP bearer token — never sent in the body.
  * `mission` is the id of an existing mission (from mission_create / mission_list).
  * Missing id → NOT_FOUND. Omitted → card is born loose.
- * `project_id` takes the project uuid or its card prefix (from project_list /
- * project_create).
+ * `project_id` takes the project uuid or its card prefix and always wins, also
+ * when it names a project of another repository. Without it, `repo` names the
+ * repository the card is about and the board picks the project whose repo_url
+ * matches (OCL-208), so filing a card needs no project_list first.
  */
 export const TaskCreateInputSchema = z
   .object({
     mission: z.string().min(1).optional(),
-    project_id: ProjectRefSchema,
+    project_id: ProjectRefSchema.optional().describe(
+      "Project uuid or card prefix (e.g. AGB). Wins over repo, also for a project of another repository.",
+    ),
+    repo: z
+      .string()
+      .trim()
+      .min(1)
+      .max(2_000)
+      .optional()
+      .describe(
+        "Without project_id: the repository the card is about, as its git remote (git remote get-url origin), owner/repo or the path you work in. The board picks the project whose repo_url matches; none or several is refused with what it looked for or the candidates.",
+      ),
     title: z.string().min(1).max(200),
     type: TaskTypeSchema,
     o_que: z.string().min(1).optional(),
@@ -817,6 +848,14 @@ export const TaskCreateInputSchema = z
     return: WriteReturnSchema.optional(),
   }).strict()
   .superRefine((value, ctx) => {
+    if (value.project_id === undefined && value.repo === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["project_id"],
+        message:
+          "send project_id (uuid or card prefix, e.g. AGB) or repo (the git remote, owner/repo or the path you work in) so the board knows the card's project",
+      });
+    }
     if (value.inherit && !value.supersedes) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -849,14 +888,33 @@ export const TaskCreateInputSchema = z
     }
   });
 
+/**
+ * How task_create chose the card's project (OCL-208): from the project_id the
+ * caller named, or from the repo it sent, with how that matched and the
+ * repo_url it matched. Always in the answer, so a card filed in the wrong
+ * place is seen on the spot instead of found later.
+ */
+export const ProjectResolutionSchema = z.object({
+  id_prefix: z.string().min(1),
+  from: z.enum(["project_id", "repo"]),
+  /** remote: same repository. path: inside its checkout. name: same folder name. */
+  match: z.enum(["remote", "path", "name"]).optional(),
+  repo_url: z.string().optional(),
+});
+
+const TaskCreateAckSchema = TaskWriteAckSchema.extend({
+  project: ProjectResolutionSchema,
+});
+
 export const TaskCreateFullOutputSchema = z.object({
   task: TaskSchema,
   subtasks: z.array(TaskSchema),
+  project: ProjectResolutionSchema,
   warnings: WarningsSchema.optional(),
 });
 
 export const TaskCreateOutputSchema = z.union([
-  TaskWriteAckSchema,
+  TaskCreateAckSchema,
   TaskCreateFullOutputSchema,
 ]);
 
@@ -1668,6 +1726,7 @@ export const toolContracts = {
 
 export type TaskCreateInput = z.infer<typeof TaskCreateInputSchema>;
 export type TaskCreateOutput = z.infer<typeof TaskCreateOutputSchema>;
+export type ProjectResolution = z.infer<typeof ProjectResolutionSchema>;
 export type TaskClaimInput = z.infer<typeof TaskClaimInputSchema>;
 export type TaskClaimOutput = z.infer<typeof TaskClaimOutputSchema>;
 export type TaskReleaseInput = z.infer<typeof TaskReleaseInputSchema>;

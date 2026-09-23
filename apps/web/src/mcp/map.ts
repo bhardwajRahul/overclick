@@ -17,6 +17,7 @@ import {
   type Project,
   type ProjectCardCounts,
   type ProjectDetail,
+  type ProjectSummary,
   type Reviewer,
   type StoredTranscriptRefWire,
   type Task,
@@ -219,6 +220,17 @@ export function mapProject(
     next_number: row.nextNumber,
     cards,
     created_at: iso(row.createdAt),
+  };
+}
+
+/** project_list's default row (OCL-208): prefix, name and repo_url only. */
+export function mapProjectSummary(
+  row: Pick<ProjectRow, "idPrefix" | "name" | "repoUrl">,
+): ProjectSummary {
+  return {
+    id_prefix: row.idPrefix,
+    name: row.name,
+    repo_url: row.repoUrl,
   };
 }
 
