@@ -8,6 +8,14 @@ export async function handleMcpRequest(
   request: Request,
   deps?: { db: McpDatabase },
 ): Promise<Response> {
+  // OCL-214: this route runs without sessions, so it has no event stream to
+  // offer. The transport used to answer GET with a stream that closed at once,
+  // and every live client reopened it in a loop (about 12 GETs a second in
+  // production, each rebuilding the whole server). 405 is the spec's way to
+  // say "no stream here"; clients stop asking.
+  if (request.method === "GET") {
+    return new Response(null, { status: 405, headers: { Allow: "POST, DELETE" } });
+  }
   const database = deps?.db ?? db();
   const auth = await authenticateBearer(
     database,
