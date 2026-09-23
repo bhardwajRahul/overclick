@@ -3670,7 +3670,7 @@ async function taskReopen(
       body: input.reason,
     });
     return taskWriteAck(updated, {
-      status: "aberto", revisado: false, reopen_comment: input.reason, report_recorded: true,
+      status: "aberto", revisado: false, reopen_comment: WRITTEN, report_recorded: true,
     });
   });
 }
@@ -3736,7 +3736,7 @@ async function taskUpdate(
     const updated = validated.value;
     if (input.return !== "full") {
       return taskWriteAck(updated, {
-        status: "validado", revisado: true, comment: input.comment!.trim(),
+        status: "validado", revisado: true, comment: WRITTEN,
       });
     }
     const latestUsageGuard = await latestUsageGuardForTask(db, updated.id);
