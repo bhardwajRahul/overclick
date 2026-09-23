@@ -152,9 +152,41 @@ describe("MCP tool contracts", () => {
       updated_at: "2026-08-19T12:00:00.000Z",
       status: "aberto",
       changed: { mode: "solo" },
+      project: { id_prefix: "OC", from: "project_id" },
     });
     expect(ack).toMatchObject({ short_id: "OC-1", status: "aberto" });
     expect(WriteAckSchema.parse(ack).changed).toEqual({ mode: "solo" });
+    // OCL-208: every task_create answer says how its project was chosen.
+    expect(
+      TaskCreateOutputSchema.safeParse({
+        short_id: "OC-1",
+        updated_at: "2026-08-19T12:00:00.000Z",
+        status: "aberto",
+        changed: { mode: "solo" },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("takes repo in place of project_id on task_create, and refuses a call with neither (OCL-208)", () => {
+    const card = {
+      title: "Card",
+      type: "bug" as const,
+      o_que: "O comportamento muda.",
+      por_que: "O fluxo atual falha.",
+      como_confirmo: [{ step: "executa o teste", expected: "passa" }],
+      origem: { cli: "codex", session_id: "sess" },
+    };
+
+    expect(
+      TaskCreateInputSchema.parse({ ...card, repo: "  git@github.com:acme/app.git " }).repo,
+    ).toBe("git@github.com:acme/app.git");
+    expect(TaskCreateInputSchema.safeParse({ ...card, project_id: "OC" }).success).toBe(true);
+
+    const neither = TaskCreateInputSchema.safeParse(card);
+    expect(neither.success).toBe(false);
+    if (neither.success) return;
+    expect(neither.error.issues[0]?.message).toContain("project_id");
+    expect(neither.error.issues[0]?.message).toContain("repo");
   });
 });
 

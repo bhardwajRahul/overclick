@@ -12,8 +12,12 @@ happens in the repository or system named by the card.
 Every work activity needs a card before execution. This includes plans, specs,
 bugs, features, refactors, and deployments.
 
-1. Call `project_list` and use the project whose repository matches the work.
-   Create the project only when no matching project exists.
+1. Let the board find the project: pass `repo` to `task_create` (the git
+   remote of the repository the work lives in, or the path you work in)
+   instead of calling `project_list` first; the answer's `project` says which
+   one it chose and how. Pass `project_id` (the card prefix) when you know it
+   or the card is for another repository: it always wins. Create a project
+   only when the refusal says none matches.
 2. Search before creating a card. For work with more than one card, create or
    select a mission and attach every card to it.
 3. A card is born without a harness: `o_que`, `por_que` and

@@ -457,6 +457,17 @@ export const ProjectSchema = z.object({
   created_at: IsoDateTimeSchema,
 });
 
+/**
+ * A project_list row by default (OCL-208): what it takes to pick a project and
+ * nothing else. The prefix is what every project_id argument accepts, so the
+ * uuid, the counters and the organization stay behind view: full.
+ */
+export const ProjectSummarySchema = z.object({
+  id_prefix: z.string().min(1),
+  name: z.string().min(1),
+  repo_url: z.string().nullable(),
+});
+
 /** The complete project payload returned by project_get and write tools. */
 export const ProjectDetailSchema = ProjectSchema.extend({
   context: z.string().nullable(),
@@ -732,6 +743,7 @@ export type ListOptions = z.infer<typeof ListOptionsSchema>;
 export type WriteReturn = z.infer<typeof WriteReturnSchema>;
 export type WriteAck = z.infer<typeof WriteAckSchema>;
 export type Project = z.infer<typeof ProjectSchema>;
+export type ProjectSummary = z.infer<typeof ProjectSummarySchema>;
 export type ProjectDetail = z.infer<typeof ProjectDetailSchema>;
 export type ProjectCardCounts = z.infer<typeof ProjectCardCountsSchema>;
 export type Task = z.infer<typeof TaskSchema>;
