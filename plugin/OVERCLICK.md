@@ -12,13 +12,22 @@ happens in the repository or system named by the card.
 Every work activity needs a card before execution. This includes plans, specs,
 bugs, features, refactors, and deployments.
 
-1. Call `project_list` and use the project whose repository matches the work.
-   Create the project only when no matching project exists.
+1. Let the board find the project: pass `repo` to `task_create` (the git
+   remote of the repository the work lives in, or the path you work in)
+   instead of calling `project_list` first; the answer's `project` says which
+   one it chose and how. Pass `project_id` (the card prefix) when you know it
+   or the card is for another repository: it always wins. Create a project
+   only when the refusal says none matches.
 2. Search before creating a card. For work with more than one card, create or
    select a mission and attach every card to it.
 3. A card is born without a harness: `o_que`, `por_que` and
-   `como_confirmo` are the whole contract. The board records which harness
-   ran a card and never decides one; that choice belongs to the Overclock app.
+   `como_confirmo` are the whole contract, and they stay required. Write
+   `como_confirmo` as a list of `{step, expected}` or as text, one
+   `step → expected` per line. Leave out what the board already has: `origem`
+   defaults to your token (send `reportado_por` when a person asked), and the
+   mission's context reaches the executor through the briefing, so do not
+   paste it into the card. The board records which harness ran a card and
+   never decides one; that choice belongs to the Overclock app.
 4. Call `task_claim` before touching the work. Declare the real CLI, exact
    model, effort and current session identifier: that is what the card records
    as the harness that ran it. The returned briefing is the self-contained
@@ -27,9 +36,11 @@ bugs, features, refactors, and deployments.
    `branch_register` before editing when the work lives in Git.
 6. Commit and push the branch before `task_deliver`. Cite the full commit ID in
    delivery evidence so the remote-check hook can confirm it.
-7. Run the usage recipe from the claim briefing and send the measured usage in
-   `task_deliver`, together with a truthful summary, evidence, branch, and the
-   first verification command or location.
+7. Call `task_deliver` with a truthful summary, evidence, branch, the first
+   verification command or location, and the measured usage. With this plugin
+   on Claude Code, omit `usage`: its `task_deliver` hook measures this session's
+   transcript from the claim and fills it in. Elsewhere, run the usage recipe
+   from the claim briefing and send what it prints. Usage you send always wins.
 8. Stop at `feito`. Only a human marks the work `validado`.
 
 Never silently replace a requested execution mechanism. If the card cannot be

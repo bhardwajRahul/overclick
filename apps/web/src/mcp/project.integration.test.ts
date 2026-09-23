@@ -4,6 +4,7 @@ import {
   ProjectCreateOutputSchema,
   ProjectDeleteOutputSchema,
   ProjectGetOutputSchema,
+  ProjectListFullOutputSchema,
   ProjectListOutputSchema,
   ProjectUpdateFullOutputSchema as ProjectUpdateOutputSchema,
   TaskCreateFullOutputSchema as TaskCreateOutputSchema,
@@ -126,9 +127,11 @@ describe("projects over MCP", () => {
     });
     expect(claimed.ok).toBe(true);
 
-    const listed = await invokeTool(world.db, ctx(), "project_list", {});
+    const listed = await invokeTool(world.db, ctx(), "project_list", {
+      view: "full",
+    });
     if (!listed.ok) throw new Error("project_list failed");
-    const row = ProjectListOutputSchema.parse(listed.value).projects.find(
+    const row = ProjectListFullOutputSchema.parse(listed.value).projects.find(
       (item) => item.id === proj.id,
     );
     expect(row?.cards).toEqual({
@@ -167,9 +170,11 @@ describe("projects over MCP", () => {
     if (!got.ok) return;
     expect(ProjectGetOutputSchema.parse(got.value).project.context).toBe(context);
 
-    const listed = await invokeTool(world.db, ctx(), "project_list", {});
+    const listed = await invokeTool(world.db, ctx(), "project_list", {
+      view: "full",
+    });
     if (!listed.ok) throw new Error("project_list failed");
-    const summary = ProjectListOutputSchema.parse(listed.value).projects.find(
+    const summary = ProjectListFullOutputSchema.parse(listed.value).projects.find(
       (row) => row.id_prefix === "DOC",
     );
     expect(summary?.has_context).toBe(true);
@@ -435,7 +440,7 @@ describe("projects over MCP", () => {
     const listed = await invokeTool(world.db, ctx(), "project_list", {});
     if (!listed.ok) throw new Error("project_list failed");
     const row = ProjectListOutputSchema.parse(listed.value).projects.find(
-      (item) => item.id === proj.id,
+      (item) => item.id_prefix === proj.id_prefix,
     );
     expect(row?.name).toBe("Marketing");
 

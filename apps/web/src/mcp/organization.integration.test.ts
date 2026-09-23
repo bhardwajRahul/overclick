@@ -10,6 +10,7 @@ import {
   OrganizationUpdateFullOutputSchema as OrganizationUpdateOutputSchema,
   ProjectCreateOutputSchema,
   ProjectGetOutputSchema,
+  ProjectListFullOutputSchema,
   ProjectListOutputSchema,
   ProjectUpdateFullOutputSchema as ProjectUpdateOutputSchema,
   TaskClaimOutputSchema,
@@ -261,10 +262,11 @@ describe("organizations over MCP", () => {
 
     const projects = await invokeTool(world.db, ctx(), "project_list", {
       organization: "Overclock",
+      view: "full",
     });
     if (!projects.ok) throw new Error("project_list failed");
     expect(
-      ProjectListOutputSchema.parse(projects.value).projects.map((row) => row.id),
+      ProjectListFullOutputSchema.parse(projects.value).projects.map((row) => row.id),
     ).toEqual([site.id]);
 
     const missions = await invokeTool(world.db, ctx(), "mission_list", {
@@ -298,9 +300,11 @@ describe("organizations over MCP", () => {
   it("returns the organization on every project read", async () => {
     world = await createTestWorld();
 
-    const listed = await invokeTool(world.db, ctx(), "project_list", {});
+    const listed = await invokeTool(world.db, ctx(), "project_list", {
+      view: "full",
+    });
     if (!listed.ok) throw new Error("project_list failed");
-    const [first] = ProjectListOutputSchema.parse(listed.value).projects;
+    const [first] = ProjectListFullOutputSchema.parse(listed.value).projects;
     expect(first?.organization_id).toBe(world.organizationId);
     expect(first?.organization_name).toBe("General");
 
@@ -359,9 +363,11 @@ describe("organizations over MCP", () => {
     expect(out.missions_reassigned).toBe(1);
 
     // The project and the mission survived the delete and moved together.
-    const projects = await invokeTool(world.db, ctx(), "project_list", {});
+    const projects = await invokeTool(world.db, ctx(), "project_list", {
+      view: "full",
+    });
     if (!projects.ok) throw new Error("project_list failed");
-    const [project] = ProjectListOutputSchema.parse(projects.value).projects;
+    const [project] = ProjectListFullOutputSchema.parse(projects.value).projects;
     expect(project?.organization_id).toBe(heir.id);
 
     const missions = await invokeTool(world.db, ctx(), "mission_list", {});
