@@ -16,12 +16,13 @@ bugs, features, refactors, and deployments.
    Create the project only when no matching project exists.
 2. Search before creating a card. For work with more than one card, create or
    select a mission and attach every card to it.
-3. Before `task_create`, call `harness_recommend` for the work type. Put the
-   returned CLI, model, and effort on the card rather than copying a fixed
-   policy into prompts or documentation.
+3. A card is born without a harness: `o_que`, `por_que` and
+   `como_confirmo` are the whole contract. The board records which harness
+   ran a card and never decides one; that choice belongs to the Overclock app.
 4. Call `task_claim` before touching the work. Declare the real CLI, exact
-   model, and current session identifier. The returned briefing is the
-   self-contained execution contract.
+   model, effort and current session identifier: that is what the card records
+   as the harness that ran it. The returned briefing is the self-contained
+   execution contract.
 5. Follow the card's confirmation steps. Register the prescribed branch with
    `branch_register` before editing when the work lives in Git.
 6. Commit and push the branch before `task_deliver`. Cite the full commit ID in
@@ -99,10 +100,12 @@ failed check in delivery evidence. A merge is not human validation.
 
 ## Runtime routing
 
-Board configuration is the source of truth for model routing. Use
-`harness_recommend` for a new card and `harness_list` only when the full current
-menu is relevant. Do not embed private model menus, people's names, internal
-instance addresses, or organization-specific policies in this package.
+The board does not route models. Which CLI, model and effort run a piece of
+work is decided outside it (in Overclock, the per-task Harness table,
+`overclock_list kind: harness`); the board records what actually ran, from the
+claim, and what it cost, from the delivery. Do not embed private model menus,
+people's names, internal instance addresses, or organization-specific policies
+in this package.
 
 ## Commands
 
@@ -122,19 +125,17 @@ separate update command.
 ## Hook defaults
 
 `SessionStart`, the post-delivery remote check, and local claim-marker updates
-are enabled by default on clients with hook support. The stop guard, pre-create
-harness enforcement, and claim guard are installed but default to off. Enable
-the blocking guards in the private OverClick config written by the installer:
+are enabled by default on clients with hook support. The stop guard and the
+claim guard are installed but default to off. Enable the blocking guards in the
+private OverClick config written by the installer:
 
 ```text
 enforce_stop=1
-enforce_harness=1
 enforce_claim=1
 ```
 
-The stop guard blocks exit while this token owns an executing card. The
-pre-create guard blocks a card whose harness does not match the board's live
-recommendation. The claim guard lets reads and investigation pass, but requires
+The stop guard blocks exit while this token owns an executing card. The claim
+guard lets reads and investigation pass, but requires
 an active claim before any mutation. A successful
 `task_claim` writes the card ID and claim time to `.overclick/claim.json` for a
 fast local check; `task_deliver` and `task_release` remove it. When that marker is
@@ -203,12 +204,11 @@ progress and therefore invisible to the board.
 ## Dispatching
 
 Listing to scan the queue is the default: `task_list` rows carry only the
-operational minimum (short_id, title, type, status, priority, cost). To
-dispatch, add `include: ["harness"]` to the same call to get the planned CLI,
-model, and effort with the row — that one call is still enough to dispatch.
-Do not call `task_get` just to choose an executor; the executor receives the
-full contract when it claims the card. Other groups exist for less common
-needs: `include: ["ids"]` for uuids, `["refs"]` for mission_id/project_id/
+operational minimum (short_id, title, type, status, priority, cost). A card
+carries no planned harness to dispatch by: whoever dispatches picks the
+executor outside the board, and the executor receives the full contract when
+it claims the card. Other groups exist for less common needs:
+`include: ["ids"]` for uuids, `["refs"]` for mission_id/project_id/
 branch/claimed_by, `["delivery"]` for commit/delivery flags/revisado/
 devolve_para, or `["all"]` for every group at once. Same `include` semantics
 apply to `task_search`.
@@ -220,7 +220,7 @@ Execute card <ID> on the OverClick board.
 ```
 
 The claim briefing already carries the contract, mission context, branch
-convention, harness, and usage recipe. Put any newly discovered run-wide rule
+convention, and usage recipe. Put any newly discovered run-wide rule
 on the card or mission before dispatching instead of duplicating it in the
 prompt.
 

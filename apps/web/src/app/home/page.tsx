@@ -252,10 +252,6 @@ function toBoardCard(
   /** Workspace lease: after this silence another executor may reclaim. */
   claimTimeoutMinutes: number,
 ): BoardCard {
-  const h = t.harness;
-  const plannedModel = h?.model ?? h?.modelTier ?? null;
-  const harness = [plannedModel, h?.effort].filter(Boolean).join(" · ") || null;
-
   const devolve =
     t.devolveParaKind === "human"
       ? (t.reviewer?.email ?? "human")
@@ -268,6 +264,19 @@ function toBoardCard(
   const latestAttempt = [...t.attempts].sort(
     (a, b) => b.startedAt.getTime() - a.startedAt.getTime(),
   )[0];
+  // What the latest claim ran on (OCL-202): the board records the harness
+  // that executed and never shows a plan. The planned value older cards still
+  // carry in task.harness stays in the database, unread.
+  const claimed = latestAttempt
+    ? decodeExecutor(
+        latestAttempt.executor,
+        latestAttempt.model,
+        latestAttempt.modelSource,
+      )
+    : null;
+  const claimedModel = claimed?.model ?? null;
+  const harness =
+    [claimedModel, claimed?.effort].filter(Boolean).join(" · ") || null;
   const latestHandoff = [...t.handoffs].sort(
     (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
   )[0];
@@ -469,10 +478,11 @@ function toBoardCard(
     telemetryLine.push({ kind: "note", text: costReason });
   }
 
-  // The board says the plan and the reality in one value; the detail panel
-  // still names what ran on its own, next to the effort the card asked for.
+  // The card line says what ran in one value: the claimed model, then any
+  // other model the usage recorded. The detail panel keeps the claim, with
+  // its effort, apart from what the usage measured.
   const ranChain = harnessChain(null, ranModels);
-  const plannedChain = harnessChain(plannedModel);
+  const claimedChain = harnessChain(claimedModel);
   const executors = [
     ...new Set(
       t.attempts.flatMap((attempt) =>
@@ -509,7 +519,6 @@ function toBoardCard(
     })),
     mission: t.mission?.title ?? null,
     harness,
-    plannedCli: h?.cli ?? null,
     // The claim records the CLI as a plain name; older attempts only ever
     // wrote it inside the executor blob, which still answers here.
     ranCli:
@@ -522,8 +531,8 @@ function toBoardCard(
           ).cli ?? null)
         : null),
     executors,
-    harnessChain: harnessChain(plannedModel, ranModels),
-    harnessRan: ranChain && ranChain !== plannedChain ? ranChain : null,
+    harnessChain: harnessChain(claimedModel, ranModels),
+    harnessRan: ranChain && ranChain !== claimedChain ? ranChain : null,
     modelSource: latestAttempt?.modelSource ?? null,
     // The column already says "done · review". A chip only earns its place by
     // saying something the column cannot: that this one is waiting on you.

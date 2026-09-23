@@ -53,17 +53,6 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "task_create|mcp__.*__task_create",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/pre-create.mjs\"",
-            "timeout": 15,
-            "statusMessage": "Checking the current harness recommendation"
-          }
-        ]
-      },
-      {
         "matcher": "*",
         "hooks": [
           {

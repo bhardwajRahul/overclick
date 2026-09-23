@@ -32,8 +32,7 @@ import {
   toolContracts,
   HarnessSchema,
   ConfiguredExecutorSchema,
-  CardapioPolicyEntrySchema,
-  HarnessSetInputSchema,
+  TaskSchema,
 } from "../src/index.js";
 
 describe("model-specific efforts", () => {
@@ -53,7 +52,7 @@ describe("model-specific efforts", () => {
 });
 
 describe("MCP tool contracts", () => {
-  it("exports input and output schemas for all 35 tools", () => {
+  it("exports input and output schemas for all 32 tools", () => {
     expect(MCP_TOOL_NAMES).toEqual([
       "organization_list",
       "organization_get",
@@ -85,9 +84,6 @@ describe("MCP tool contracts", () => {
       "task_deliver",
       "task_delete",
       "branch_register",
-      "harness_recommend",
-      "harness_list",
-      "harness_set",
       "executors_update",
       "insights_query",
     ]);
@@ -174,7 +170,7 @@ describe("task_list", () => {
     ).toBe(false);
   });
 
-  it("models compact read rows with an optional harness and absent fields", () => {
+  it("models compact read rows with the executor that ran and absent fields", () => {
     const task = TaskReadSchema.parse({
       id: "task-1",
       short_id: "OC-1",
@@ -189,6 +185,7 @@ describe("task_list", () => {
       o_que: "The contract is available.",
       por_que: "The queue stays cheap.",
       como_confirmo: [{ step: "read", expected: "compact" }],
+      executor: { cli: "codex", model: "model-1", effort: "medium" },
       harness: { cli: "codex", model: "model-1", effort: "medium" },
       origem: { cli: "codex" },
       mode: "solo",
@@ -197,11 +194,13 @@ describe("task_list", () => {
       workspace_id: "must-not-cross-the-wire",
     });
 
-    expect(task.harness).toEqual({
+    expect(task.executor).toEqual({
       cli: "codex",
       model: "model-1",
       effort: "medium",
     });
+    // OCL-202: a card no longer carries a planned harness on the wire.
+    expect(task).not.toHaveProperty("harness");
     expect(task).not.toHaveProperty("workspace_id");
     expect(TaskReadSchema.safeParse({ ...task, commit: null }).success).toBe(false);
 
@@ -288,6 +287,7 @@ describe("task_list", () => {
       reports_count: 2,
     });
 
+    // OCL-202: include harness is still accepted, but no row carries it.
     const withHarness = TaskListItemSchema.parse({
       short_id: "OC-1",
       title: "t",
@@ -296,11 +296,7 @@ describe("task_list", () => {
       priority: "alta",
       harness: { cli: "codex", model: "model-1", effort: "medium" },
     });
-    expect(withHarness.harness).toEqual({
-      cli: "codex",
-      model: "model-1",
-      effort: "medium",
-    });
+    expect(withHarness).not.toHaveProperty("harness");
   });
 
   it("takes include as one of the five named groups", () => {
@@ -1012,27 +1008,6 @@ describe("harness account/provider wire contract (OCL-108)", () => {
     expect(parsed.harness?.account).toBe("claude-oauth");
   });
 
-  it("lets a cardápio policy row carry a preferred account", () => {
-    const parsed = CardapioPolicyEntrySchema.parse({
-      type: "feature",
-      cli: "claude-code",
-      model: "sonnet-5",
-      effort: "high",
-      account: "claude-oauth-acc-2",
-    });
-    expect(parsed.account).toBe("claude-oauth-acc-2");
-  });
-
-  it("lets harness_set declare a preferred account", () => {
-    const parsed = HarnessSetInputSchema.parse({
-      type: "feature",
-      model: "sonnet-5",
-      effort: "high",
-      account: "claude-oauth-acc-2",
-    });
-    expect(parsed.account).toBe("claude-oauth-acc-2");
-  });
-
   it("exposes the accounts available for a cli, each independently enabled", () => {
     const parsed = ConfiguredExecutorSchema.parse({
       id: "claude-code",
@@ -1126,6 +1101,97 @@ describe("resolved_in only takes a release version", () => {
     expect(
       TaskUpdateInputSchema.safeParse({ task_id: "OC-1", resolved_in: null })
         .success,
+    ).toBe(true);
+  });
+});
+
+describe("the board records the harness that ran, it never plans one (OCL-202)", () => {
+  const card = {
+    id: "task-1",
+    short_id: "OCL-1",
+    title: "t",
+    type: "feature",
+    status: "em_execucao",
+    revisado: false,
+    priority: "media",
+    project_id: "project-1",
+    mission_id: null,
+    devolve_para: { kind: "workspace_queue" },
+    commit: null,
+    delivery_unverified: false,
+    delivery_verification: null,
+    delivery_warning: null,
+    workspace_id: "ws-1",
+    previous_short_ids: [],
+    parent_id: null,
+    supersedes: null,
+    superseded_by: null,
+    o_que: "x",
+    por_que: "x",
+    como_confirmo: [{ step: "s", expected: "e" }],
+    origem: { agent: "test" },
+    mode: "solo",
+    branch: null,
+    pull_request_url: null,
+    resolved_in: null,
+    reopen_comment: null,
+    claimed_by: null,
+    created_at: "2026-09-23T12:00:00.000Z",
+    updated_at: "2026-09-23T12:00:00.000Z",
+  };
+
+  it("publishes no policy tool", () => {
+    for (const name of ["harness_recommend", "harness_list", "harness_set"]) {
+      expect(MCP_TOOL_NAMES as readonly string[]).not.toContain(name);
+    }
+  });
+
+  it("carries the executor of the latest claim and no planned harness", () => {
+    const parsed = TaskSchema.parse({
+      ...card,
+      executor: { cli: "claude-code", model: "opus-5", effort: "max" },
+      harness: { cli: "codex", model: "gpt-5.6-sol", effort: "xhigh" },
+    });
+    expect(parsed.executor).toEqual({ cli: "claude-code", model: "opus-5", effort: "max" });
+    expect(parsed).not.toHaveProperty("harness");
+    expect(TaskSchema.parse(card)).not.toHaveProperty("executor");
+  });
+
+  it("records effort on the claim, and a claim without it is still valid", () => {
+    expect(
+      TaskClaimInputSchema.parse({
+        task_id: "OCL-1",
+        executor: { cli: "codex", model: "gpt-5.6-sol", effort: "xhigh", session_id: "s-1" },
+      }).executor?.effort,
+    ).toBe("xhigh");
+    expect(
+      TaskClaimInputSchema.safeParse({
+        task_id: "OCL-1",
+        executor: { cli: "codex", model: "gpt-5.6-sol", session_id: "s-1" },
+      }).success,
+    ).toBe(true);
+  });
+
+  it("still accepts the old harness input for one release, marked deprecated", () => {
+    const create = TaskCreateInputSchema.safeParse({
+      project_id: "OCL",
+      title: "t",
+      type: "bug",
+      o_que: "x",
+      por_que: "x",
+      como_confirmo: [{ step: "s", expected: "e" }],
+      origem: { agent: "test" },
+      harness: { cli: "codex", model: "gpt-5.6-sol", effort: "xhigh" },
+    });
+    expect(create.success).toBe(true);
+    expect(TaskCreateInputSchema.innerType().shape.harness.description).toMatch(
+      /Deprecated and ignored/,
+    );
+    expect(
+      TaskUpdateInputSchema.safeParse({
+        task_id: "OCL-1",
+        harness: { model: "gpt-5.6-sol", effort: "xhigh" },
+      }).success,
     ).toBe(true);
   });
 });

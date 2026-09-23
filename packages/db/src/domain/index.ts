@@ -28,7 +28,6 @@ export {
   type DurationSource,
   type ResolvedDuration,
 } from "./duration";
-export { factoryCardapioPolicy } from "./cardapio";
 export { harnessChain } from "./harness";
 export {
   areSegmentsPriced,

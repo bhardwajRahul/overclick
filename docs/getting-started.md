@@ -37,8 +37,8 @@ Postgres. No verification e-mail, no marketing questions: it's just a login.
 1. **Project**: name it, optionally add the repo URL. The ID prefix (e.g. `AGB`) is
    derived from the name; it drives the whole Git convention: cards become `AGB-1`,
    branches become `agb-1-fix-login`.
-2. **Executors**: check the CLIs/models your team actually has. This feeds the harness
-   policy: the board only ever recommends models you own.
+2. **Executors**: check the CLIs/models your team actually has. A claim that declares a
+   model outside this list is refused, so the record only ever names models you own.
 3. **Connect your agent**: two paths, both ending with the agent connected over MCP.
 
 ### Pairing code (recommended, the token never touches the chat)
@@ -98,8 +98,8 @@ when creating the card: it's the contract). Then:
 ## 6. Daily flow
 
 - **Morning (board):** create cards. Each card is a contract (*What / Why / How to
-  confirm*), and the form pre-fills the recommended harness from your policy (activity
-  type → CLI · model · effort). Adjust per card or edit the policy in Settings.
+  confirm*), with no model attached: the agent that claims it records the CLI, model and
+  effort it actually runs on.
 - **All day (terminal):** "grab the next task" · "register this as a task for later".
   Agents also file their own discoveries as cards over MCP.
 - **End of day (board):** the *Done* column is your review queue. Validate or reopen.
@@ -107,8 +107,6 @@ when creating the card: it's the contract). Then:
 ## 7. Settings
 
 - **Executors**: add/remove CLIs and models.
-- **Harness policy**: the activity-type table: which CLI/model/effort runs bugs,
-  features, RFCs, mechanical chores. Agents read it via the `harness_list` tool.
 - **MCP tokens**: one per agent/machine, revocable, last-use tracked. The pairing-code
   button lives here too: pair a new agent without the token ever entering a chat.
 - **Updates**: off, check only or automatic, plus the update that applies to how this

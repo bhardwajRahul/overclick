@@ -41,12 +41,6 @@
     },
     {
       "event": "PreToolUse",
-      "matcher": "task_create|mcp__.*__task_create",
-      "command": "node \"./hooks/pre-create.mjs\"",
-      "timeout": 15
-    },
-    {
-      "event": "PreToolUse",
       "matcher": "*",
       "command": "node \"./hooks/claim-guard.mjs\"",
       "timeout": 15

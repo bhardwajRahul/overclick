@@ -1,11 +1,8 @@
 import { workspace } from "@agent-board/db";
 import {
   ExecutorsUpdateFullOutputSchema as ExecutorsUpdateOutputSchema,
-  HarnessListOutputSchema,
-  HarnessRecommendOutputSchema,
   TaskClaimOutputSchema,
   TaskCreateFullOutputSchema as TaskCreateOutputSchema,
-  TaskSearchOutputSchema,
   toolContracts,
 } from "@agent-board/mcp-core";
 import { eq } from "drizzle-orm";
@@ -48,7 +45,22 @@ describe("executors_update manages the executor config over MCP", () => {
     return ws?.executors ?? [];
   }
 
-  it("adds a model that Settings, the policy selects and a card harness all see", async () => {
+  async function createCard(title: string) {
+    const created = await invokeTool(world.db, worker(), "task_create", {
+      project_id: world.projectId,
+      title,
+      type: "feature",
+      o_que: "x",
+      por_que: "y",
+      como_confirmo: [{ step: "a", expected: "b" }],
+      origem: { cli: "codex" },
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) throw new Error("task_create failed");
+    return TaskCreateOutputSchema.parse(created.value).task;
+  }
+
+  it("adds a model that Settings sees and a claim may then declare", async () => {
     world = await createTestWorld();
     const updated = await invokeTool(world.db, manager(), "executors_update", {
       cli: "claude-code",
@@ -70,30 +82,23 @@ describe("executors_update manages the executor config over MCP", () => {
     expect(sel.models["claude-code"]).toContain("opus-5");
     expect(sel.enabled["claude-code"]).toContain("opus-5");
 
-    // And harness_list, which is what an agent reads, offers it too.
-    const listed = await invokeTool(world.db, worker(), "harness_list", {});
-    expect(listed.ok).toBe(true);
-    if (!listed.ok) return;
-    const executors = HarnessListOutputSchema.parse(listed.value).executors;
-    expect(
-      executors.find((item) => item.id === "claude-code")?.models,
-    ).toContain("opus-5");
-
-    // Selectable as a card harness: task_update validates against this config.
-    const created = await invokeTool(world.db, worker(), "task_create", {
-      project_id: world.projectId,
-      title: "Card on the new model",
-      type: "feature",
-      o_que: "x",
-      por_que: "y",
-      como_confirmo: [{ step: "a", expected: "b" }],
-      origem: { cli: "claude-code" },
-      harness: { cli: "claude-code", model: "opus-5", effort: "high" },
+    // The catalog is what a claim is checked against: the new model is now a
+    // legal thing to declare, and the card records it as what ran.
+    const card = await createCard("Card claimed on the new model");
+    const claimed = await invokeTool(world.db, worker(), "task_claim", {
+      task_id: card.short_id,
+      executor: { cli: "claude-code", model: "opus-5", effort: "high" },
     });
-    expect(created.ok).toBe(true);
+    expect(claimed.ok).toBe(true);
+    if (!claimed.ok) return;
+    expect(TaskClaimOutputSchema.parse(claimed.value).task.executor).toEqual({
+      cli: "claude-code",
+      model: "opus-5",
+      effort: "high",
+    });
   });
 
-  it("publishes per-model efforts and validates harness writes against the override", async () => {
+  it("publishes per-model efforts, and the claim records the effort it declared", async () => {
     world = await createTestWorld();
     const updated = await invokeTool(world.db, manager(), "executors_update", {
       cli: "codex",
@@ -103,79 +108,24 @@ describe("executors_update manages the executor config over MCP", () => {
     });
     expect(updated.ok).toBe(true);
     if (!updated.ok) return;
-    const listed = await invokeTool(world.db, worker(), "harness_list", {});
-    expect(listed.ok).toBe(true);
-    if (!listed.ok) return;
-    const row = HarnessListOutputSchema.parse(listed.value).executors.find(
+    const row = ExecutorsUpdateOutputSchema.parse(updated.value).executors.find(
       (item) => item.id === "codex",
     );
     expect(row?.efforts["gpt-5.6-sol"]).toEqual(["low", "high"]);
     expect(row?.effort_sources?.["gpt-5.6-sol"]).toBe("custom");
 
-    const invalidSet = await invokeTool(world.db, manager(), "harness_set", {
-      type: "bug",
-      cli: "codex",
-      model: "gpt-5.6-sol",
-      effort: "turbo",
-    });
-    expect(invalidSet.ok).toBe(false);
-    if (invalidSet.ok) return;
-    expect(invalidSet.error.code).toBe("INVALID_ARGUMENT");
-    expect(invalidSet.error.message).toContain("low, high");
-
-    const validSet = await invokeTool(world.db, manager(), "harness_set", {
-      type: "bug",
-      cli: "codex",
-      model: "gpt-5.6-sol",
-      effort: "high",
-    });
-    expect(validSet.ok).toBe(true);
-
-    const invalidCreate = await invokeTool(world.db, worker(), "task_create", {
-      project_id: world.projectId,
-      title: "Reject unsupported effort",
-      type: "feature",
-      o_que: "x",
-      por_que: "y",
-      como_confirmo: [{ step: "a", expected: "b" }],
-      origem: { cli: "codex" },
-      harness: { cli: "codex", model: "gpt-5.6-sol", effort: "turbo" },
-    });
-    expect(invalidCreate.ok).toBe(false);
-    if (invalidCreate.ok) return;
-    expect(invalidCreate.error.message).toContain("low, high");
-
-    const created = await invokeTool(world.db, worker(), "task_create", {
-      project_id: world.projectId,
-      title: "Record effort divergence",
-      type: "feature",
-      o_que: "x",
-      por_que: "y",
-      como_confirmo: [{ step: "a", expected: "b" }],
-      origem: { cli: "codex" },
-      harness: { cli: "codex", model: "gpt-5.6-sol", effort: "low" },
-    });
-    expect(created.ok).toBe(true);
-    if (!created.ok) return;
-    const createdOut = TaskCreateOutputSchema.parse(created.value);
-
-    const invalidUpdate = await invokeTool(world.db, worker(), "task_update", {
-      task_id: createdOut.task.short_id,
-      harness: { cli: "codex", model: "gpt-5.6-sol", effort: "turbo" },
-    });
-    expect(invalidUpdate.ok).toBe(false);
-    if (invalidUpdate.ok) return;
-    expect(invalidUpdate.error.message).toContain("low, high");
-
+    // The board records what ran; it does not hold the claim to a menu.
+    const card = await createCard("Record the declared effort");
     const claimed = await invokeTool(world.db, worker(), "task_claim", {
-      task_id: createdOut.task.short_id,
+      task_id: card.short_id,
       executor: { cli: "codex", model: "gpt-5.6-sol", effort: "max" },
     });
     expect(claimed.ok).toBe(true);
     if (!claimed.ok) return;
     const claimedOut = TaskClaimOutputSchema.parse(claimed.value);
-    expect(claimedOut.harness_divergence?.actual.effort).toBe("max");
-    expect(claimedOut.harness_divergence?.warning).toContain("low");
+    expect(claimedOut.attempt.executor.effort).toBe("max");
+    expect(claimedOut.task.executor?.effort).toBe("max");
+    expect(claimedOut).not.toHaveProperty("harness_divergence");
   });
 
   it("refuses a worker token and leaves the config untouched", async () => {
@@ -219,34 +169,7 @@ describe("executors_update manages the executor config over MCP", () => {
     expect(out.executors.filter((item) => item.id === "claude-code")).toHaveLength(1);
   });
 
-  it("stays quiet while a policy line still has a successor to fall back on", async () => {
-    world = await createTestWorld();
-    // microcopy runs haiku-4-5 → sonnet-5 → gpt-5.6-sol. Losing the head costs
-    // the line nothing, because the successor is still configured.
-    const removed = await invokeTool(world.db, manager(), "executors_update", {
-      cli: "claude-code",
-      remove_models: ["haiku-4-5"],
-    });
-    expect(removed.ok).toBe(true);
-    if (!removed.ok) return;
-    const out = ExecutorsUpdateOutputSchema.parse(removed.value);
-    expect(
-      out.executors.find((item) => item.id === "claude-code")?.models,
-    ).not.toContain("haiku-4-5");
-    expect(out.policy_warnings).toBeUndefined();
-
-    const rec = await invokeTool(world.db, worker(), "harness_recommend", {
-      type: "microcopy",
-    });
-    expect(rec.ok).toBe(true);
-    if (!rec.ok) return;
-    const recommended = HarnessRecommendOutputSchema.parse(rec.value);
-    expect(recommended.available).toBe(true);
-    expect(recommended.harness.model).toBe("sonnet-5");
-    expect(recommended.chain_position).toBe(1);
-  });
-
-  it("removes a model and warns about the policy line it orphans", async () => {
+  it("removes a model with no routing table left to warn about (OCL-202)", async () => {
     world = await createTestWorld();
     const removed = await invokeTool(world.db, manager(), "executors_update", {
       cli: "claude-code",
@@ -258,50 +181,7 @@ describe("executors_update manages the executor config over MCP", () => {
     expect(
       out.executors.find((item) => item.id === "claude-code")?.models,
     ).not.toContain("sonnet-5");
-    // microcopy and drone are the two lines with no link left standing.
-    expect(out.policy_warnings?.join(" ")).toContain("microcopy");
-    expect(out.policy_warnings?.join(" ")).toContain("harness_set");
-
-    // The cheap chain is gone, but claude-code is still on with top-tier
-    // models: harness_recommend crosses to one of those rather than stalling,
-    // and says so with available:"fallback" instead of hiding behind a bare
-    // true or a useless false.
-    const rec = await invokeTool(world.db, worker(), "harness_recommend", {
-      type: "microcopy",
-    });
-    expect(rec.ok).toBe(true);
-    if (!rec.ok) return;
-    const recommended = HarnessRecommendOutputSchema.parse(rec.value);
-    expect(recommended.available).toBe("fallback");
-    expect(recommended.harness.model).toBe("fable-5");
-    expect(recommended.matched_executor?.cli).toBe("claude-code");
-    expect(recommended.divergence).toContain("fallback");
-  });
-
-  it("warns only about what this call broke, not about orphans it inherited", async () => {
-    world = await createTestWorld();
-    // Leave the board already broken: the cheap lines lose every link.
-    const first = await invokeTool(world.db, manager(), "executors_update", {
-      cli: "claude-code",
-      remove_models: ["haiku-4-5", "sonnet-5"],
-    });
-    expect(first.ok).toBe(true);
-    if (!first.ok) return;
-    const broke = ExecutorsUpdateOutputSchema.parse(first.value).policy_warnings ?? [];
-    expect(broke).toHaveLength(2);
-    expect(broke.join(" ")).toContain("'microcopy'");
-    expect(broke.join(" ")).toContain("'drone'");
-
-    // An unrelated add must not re-report the orphan that was already there.
-    const second = await invokeTool(world.db, manager(), "executors_update", {
-      cli: "codex",
-      add_models: ["gpt-5.6-sol"],
-    });
-    expect(second.ok).toBe(true);
-    if (!second.ok) return;
-    expect(
-      ExecutorsUpdateOutputSchema.parse(second.value).policy_warnings,
-    ).toBeUndefined();
+    expect(removed.value).not.toHaveProperty("policy_warnings");
   });
 
   it("drops a whole CLI and reports an unknown one as NOT_FOUND", async () => {
@@ -324,7 +204,8 @@ describe("executors_update manages the executor config over MCP", () => {
     expect(missing.ok).toBe(false);
     if (missing.ok) return;
     expect(missing.error.code).toBe("NOT_FOUND");
-    expect(missing.error.message).toContain("harness_list");
+    expect(missing.error.message).toContain("Settings");
+    expect(missing.error.message).not.toContain("harness_list");
   });
 
   it("rejects a call that asks for nothing and one that mixes remove with edits", async () => {
@@ -365,15 +246,8 @@ describe("executors_update manages the executor config over MCP", () => {
       "sonnet-5",
       "haiku-4-5",
     ]);
-
-    // harness_list only reports what is on, so the policy has nothing left.
-    const listed = await invokeTool(world.db, worker(), "harness_list", {});
-    expect(listed.ok).toBe(true);
-    if (!listed.ok) return;
     expect(
-      HarnessListOutputSchema.parse(listed.value).executors.find(
-        (item) => item.id === "claude-code",
-      )?.enabled,
+      (await storedConfig()).find((item) => item.id === "claude-code")?.enabled,
     ).toBe(false);
   });
 
@@ -391,216 +265,5 @@ describe("executors_update manages the executor config over MCP", () => {
     // "invalid response from executors_update: Invalid input" here.
     const parsed = toolContracts.executors_update.output.parse(off.value);
     expect(parsed).toMatchObject({ id: "claude-code", removed: false });
-  });
-});
-
-describe("harness_recommend falls back across CLIs when a policy's own executor is off (OCL-75)", () => {
-  let world: TestWorld;
-
-  afterEach(async () => {
-    if (world) await closeTestWorld(world);
-  });
-
-  function worker() {
-    return {
-      tokenId: world.tokenId,
-      workspaceId: world.workspaceId,
-      tokenLabel: "test-agent",
-      canManage: false,
-    };
-  }
-
-  function manager() {
-    return {
-      tokenId: world.manageTokenId,
-      workspaceId: world.workspaceId,
-      tokenLabel: "owner-console",
-      canManage: true,
-    };
-  }
-
-  it("recommends the best available cross-CLI model with divergence, then returns to full policy on re-enable", async () => {
-    world = await createTestWorld();
-
-    // Real-world case (2026-08-19): the owner ran out of GPT limit and wants
-    // Codex off temporarily, without the cardápio turning into a dead end.
-    const addedCodex = await invokeTool(world.db, manager(), "executors_update", {
-      cli: "codex",
-      label: "Codex",
-      add_models: ["gpt-5.6-sol", "gpt-5.6-terra"],
-    });
-    expect(addedCodex.ok).toBe(true);
-
-    const policySet = await invokeTool(world.db, manager(), "harness_set", {
-      type: "feature",
-      cli: "codex",
-      model: "gpt-5.6-sol",
-      chain: ["gpt-5.6-sol", "gpt-5.6-terra"],
-      effort: "high",
-    });
-    expect(policySet.ok).toBe(true);
-
-    const fullPolicy = await invokeTool(world.db, worker(), "harness_recommend", {
-      type: "feature",
-    });
-    expect(fullPolicy.ok).toBe(true);
-    if (!fullPolicy.ok) return;
-    expect(HarnessRecommendOutputSchema.parse(fullPolicy.value)).toMatchObject({
-      available: true,
-      harness: { cli: "codex", model: "gpt-5.6-sol" },
-    });
-
-    // 1. executors_update {cli: codex, enabled: false} -> a valid ack.
-    const disabled = await invokeTool(world.db, manager(), "executors_update", {
-      cli: "codex",
-      enabled: false,
-      return: "ack",
-    });
-    expect(disabled.ok).toBe(true);
-    if (!disabled.ok) return;
-    toolContracts.executors_update.output.parse(disabled.value);
-
-    // 2. harness_recommend(feature) with codex off -> cross-CLI fallback,
-    // never a silent tier below, with a divergence explaining both halves.
-    const withFallback = await invokeTool(world.db, worker(), "harness_recommend", {
-      type: "feature",
-    });
-    expect(withFallback.ok).toBe(true);
-    if (!withFallback.ok) return;
-    const fallback = HarnessRecommendOutputSchema.parse(withFallback.value);
-    expect(fallback.available).toBe("fallback");
-    expect(fallback.harness.cli).toBe("claude-code");
-    expect(fallback.harness.model).toBe("sonnet-5");
-    expect(fallback.matched_executor).toMatchObject({
-      cli: "claude-code",
-      model: "sonnet-5",
-    });
-    expect(fallback.divergence).toContain("gpt-5.6-sol");
-    expect(fallback.divergence).toContain("fallback");
-
-    // 3. executors_update {cli: codex, enabled: true} + recommend -> full
-    // policy is back, no residue from the fallback detour.
-    const reenabled = await invokeTool(world.db, manager(), "executors_update", {
-      cli: "codex",
-      enabled: true,
-      return: "ack",
-    });
-    expect(reenabled.ok).toBe(true);
-    if (!reenabled.ok) return;
-    toolContracts.executors_update.output.parse(reenabled.value);
-
-    const backToPolicy = await invokeTool(world.db, worker(), "harness_recommend", {
-      type: "feature",
-    });
-    expect(backToPolicy.ok).toBe(true);
-    if (!backToPolicy.ok) return;
-    expect(HarnessRecommendOutputSchema.parse(backToPolicy.value)).toMatchObject({
-      available: true,
-      harness: { cli: "codex", model: "gpt-5.6-sol", effort: "high" },
-      chain_position: 0,
-    });
-  });
-
-  it("rejects task_create/task_update citing a disabled executor's model, with the fallback in the error (OCL-77)", async () => {
-    world = await createTestWorld();
-    const addedCodex = await invokeTool(world.db, manager(), "executors_update", {
-      cli: "codex",
-      label: "Codex",
-      add_models: ["gpt-5.6-sol"],
-    });
-    expect(addedCodex.ok).toBe(true);
-    const disabled = await invokeTool(world.db, manager(), "executors_update", {
-      cli: "codex",
-      enabled: false,
-    });
-    expect(disabled.ok).toBe(true);
-
-    // 4. task_create with a harness citing a disabled executor is a typed
-    // rejection, never a silent accept, and the error already carries the
-    // fallback harness_recommend would give for this activity type.
-    const rejected = await invokeTool(world.db, worker(), "task_create", {
-      project_id: world.projectId,
-      title: "Card pinned to a disabled executor",
-      type: "feature",
-      o_que: "x",
-      por_que: "y",
-      como_confirmo: [{ step: "a", expected: "b" }],
-      origem: { cli: "codex" },
-      harness: { cli: "codex", model: "gpt-5.6-sol", effort: "high" },
-    });
-    expect(rejected.ok).toBe(false);
-    if (rejected.ok) return;
-    expect(rejected.error.code).toBe("INVALID_ARGUMENT");
-    expect(rejected.error.message).toContain("codex");
-    expect(rejected.error.message).toContain("disabled");
-    expect(rejected.error.message).toContain("opus-5");
-
-    // No half-created card left behind by the rejected write.
-    const search = await invokeTool(world.db, worker(), "task_search", {
-      q: "Card pinned to a disabled executor",
-    });
-    expect(search.ok).toBe(true);
-    if (search.ok) expect(TaskSearchOutputSchema.parse(search.value).tasks).toHaveLength(0);
-
-    // task_update citing the same disabled executor is rejected the same
-    // way; other fields on an existing card stay editable (OCL-77 item 4).
-    const created = await invokeTool(world.db, worker(), "task_create", {
-      project_id: world.projectId,
-      title: "Card without a pinned harness",
-      type: "feature",
-      o_que: "x",
-      por_que: "y",
-      como_confirmo: [{ step: "a", expected: "b" }],
-      origem: { cli: "codex" },
-    });
-    expect(created.ok).toBe(true);
-    if (!created.ok) return;
-    const card = TaskCreateOutputSchema.parse(created.value).task;
-
-    const rejectedUpdate = await invokeTool(world.db, worker(), "task_update", {
-      task_id: card.short_id,
-      harness: { cli: "codex", model: "gpt-5.6-sol", effort: "high" },
-    });
-    expect(rejectedUpdate.ok).toBe(false);
-    if (rejectedUpdate.ok) return;
-    expect(rejectedUpdate.error.code).toBe("INVALID_ARGUMENT");
-    expect(rejectedUpdate.error.message).toContain("disabled");
-
-    const commented = await invokeTool(world.db, worker(), "task_update", {
-      task_id: card.short_id,
-      comment: "still editable without touching the harness",
-    });
-    expect(commented.ok).toBe(true);
-
-    // 5. Re-enabling codex makes the same explicit harness a normal accept
-    // again, on both task_create and task_update.
-    const reenabled = await invokeTool(world.db, manager(), "executors_update", {
-      cli: "codex",
-      enabled: true,
-    });
-    expect(reenabled.ok).toBe(true);
-
-    const acceptedCreate = await invokeTool(world.db, worker(), "task_create", {
-      project_id: world.projectId,
-      title: "Card pinned to a re-enabled executor",
-      type: "feature",
-      o_que: "x",
-      por_que: "y",
-      como_confirmo: [{ step: "a", expected: "b" }],
-      origem: { cli: "codex" },
-      harness: { cli: "codex", model: "gpt-5.6-sol", effort: "high" },
-    });
-    expect(acceptedCreate.ok).toBe(true);
-    if (!acceptedCreate.ok) return;
-    expect(TaskCreateOutputSchema.parse(acceptedCreate.value).task.harness).toMatchObject({
-      cli: "codex",
-      model: "gpt-5.6-sol",
-    });
-
-    const acceptedUpdate = await invokeTool(world.db, worker(), "task_update", {
-      task_id: card.short_id,
-      harness: { cli: "codex", model: "gpt-5.6-sol", effort: "high" },
-    });
-    expect(acceptedUpdate.ok).toBe(true);
   });
 });

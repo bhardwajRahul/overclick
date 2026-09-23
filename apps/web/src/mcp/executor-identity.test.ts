@@ -7,18 +7,23 @@ import {
   unregisteredClaimModelRefusal,
 } from "./executor-identity";
 
-const sol = { cli: "codex", model: "gpt-5.6-sol" };
-
 describe("executor identity aliases", () => {
   it("uses the confirmed Codex fallbacks", () => {
-    expect(resolveClaimExecutor({ cli: "codex", model: "gpt-5" }, null)).toMatchObject({
+    expect(resolveClaimExecutor({ cli: "codex", model: "gpt-5" })).toMatchObject({
       model: DEFAULT_CODEX_MODEL,
       model_source: "harness",
     });
-    expect(resolveClaimExecutor({ cli: "codex", model: "o4-mini" }, sol)).toMatchObject({
+    expect(resolveClaimExecutor({ cli: "codex", model: "o4-mini" })).toMatchObject({
       model: "gpt-5-6-sol",
       model_source: "harness",
     });
+  });
+
+  it("records no model for any other generic label (OCL-202: no plan to inherit)", () => {
+    const resolved = resolveClaimExecutor({ cli: "claude-code", model: "claude", effort: "max" });
+    expect(resolved).not.toHaveProperty("model");
+    expect(resolved).not.toHaveProperty("model_source");
+    expect(resolved).toMatchObject({ cli: "claude-code", effort: "max" });
   });
 
   it.each([
@@ -31,22 +36,17 @@ describe("executor identity aliases", () => {
     ["kimi", "k3"],
     ["kimi-code/k3", "k3"],
   ])("normalizes declared model %s to %s", (declared, expected) => {
-    expect(resolveClaimExecutor({ cli: "other", model: declared }, null)).toMatchObject({
+    expect(resolveClaimExecutor({ cli: "other", model: declared })).toMatchObject({
       model: expected,
       model_source: "declared",
     });
   });
 
-  it("resolves CLI aliases and the orchestrator through the harness", () => {
-    expect(resolveClaimExecutor({ cli: "Codex CLI", model: "gpt-5" }, sol).cli).toBe(
-      "codex",
+  it("resolves CLI aliases and records the orchestrator as it declared itself", () => {
+    expect(resolveClaimExecutor({ cli: "Codex CLI", model: "gpt-5" }).cli).toBe("codex");
+    expect(resolveClaimExecutor({ cli: "overclock", model: "claude-fable-5" }).cli).toBe(
+      "overclock",
     );
-    expect(
-      resolveClaimExecutor(
-        { cli: "overclock", model: "claude-fable-5" },
-        { cli: "claude-code", model: "fable-5" },
-      ).cli,
-    ).toBe("claude-code");
   });
 
   const executors = [

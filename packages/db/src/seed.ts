@@ -2,9 +2,7 @@ import { fileURLToPath } from "node:url";
 import { eq } from "drizzle-orm";
 import { createDb } from "./client";
 import { requireDatabaseUrl } from "./env";
-import { factoryCardapioPolicy } from "./domain/cardapio";
 import {
-  cardapioEntry,
   organization,
   project,
   task,
@@ -36,22 +34,10 @@ export async function seed(url = requireDatabaseUrl()): Promise<{
       .values({
         name: EXAMPLE_WORKSPACE.name,
         executors: EXAMPLE_WORKSPACE.executors,
-        cardapio: EXAMPLE_WORKSPACE.cardapio,
       })
       .returning({ id: workspace.id });
 
     if (!ws) throw new Error("failed to insert workspace");
-
-    await db.insert(cardapioEntry).values(
-      factoryCardapioPolicy().map((row) => ({
-        workspaceId: ws.id,
-        activityType: row.type,
-        cli: row.cli,
-        model: row.model,
-        chain: row.chain,
-        effort: row.effort,
-      })),
-    );
 
     const [org] = await db
       .insert(organization)
@@ -86,7 +72,6 @@ export async function seed(url = requireDatabaseUrl()): Promise<{
         tipo: EXAMPLE_CARD.tipo,
         status: EXAMPLE_CARD.status,
         isExample: EXAMPLE_CARD.isExample,
-        harness: EXAMPLE_CARD.harness,
         devolveParaKind: "workspace_queue",
       })
       .returning({ id: task.id });

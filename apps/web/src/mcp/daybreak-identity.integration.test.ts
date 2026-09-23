@@ -26,11 +26,10 @@ describe("Daybreak executor identity (OCL-190)", () => {
     ] });
   }
 
-  it.each([[daybreak, daybreak], ["gpt-5.6-sol", "gpt-5-6-sol"], ["gpt-6-astra", "gpt-6-astra"], [undefined, daybreak]])(
+  it.each([[daybreak, daybreak], ["gpt-5.6-sol", "gpt-5-6-sol"], ["gpt-6-astra", "gpt-6-astra"]])(
     "preserves the effective identity on claim for %s", async (declared, expected) => {
       await setup();
-      const [card] = await world.db.insert(task).values({ projectId: world.projectId, shortId: "OC-1", title: "Identity",
-        harness: { cli: "codex", model: daybreak, effort: "max" } }).returning();
+      const [card] = await world.db.insert(task).values({ projectId: world.projectId, shortId: "OC-1", title: "Identity" }).returning();
       const result = await invokeTool(world.db, ctx(), "task_claim", { task_id: card!.id,
         executor: { cli: "codex", model: declared, effort: "max", session_id: "identity-session" } });
       expect(result.ok).toBe(true);
@@ -40,9 +39,25 @@ describe("Daybreak executor identity (OCL-190)", () => {
       if (declared) expect(claimed.attempt.executor.model_source).toBe("declared");
       expect(claimed.usage_recipe?.command).toContain(`codex_model=${expected}`);
       expect((await world.db.select().from(executionAttempt))[0]?.model).toBe(expected);
-      if (expected === daybreak) expect(claimed.harness_divergence).toBeUndefined();
+      expect(claimed.task.executor).toMatchObject({ cli: "codex", model: expected, effort: "max" });
     },
   );
+
+  it("never takes the model from a planned harness an old card still carries (OCL-202)", async () => {
+    await setup();
+    const [card] = await world.db.insert(task).values({ projectId: world.projectId, shortId: "OC-1", title: "Legacy plan",
+      harness: { cli: "codex", model: daybreak, effort: "max" } }).returning();
+    const result = await invokeTool(world.db, ctx(), "task_claim", { task_id: card!.id,
+      executor: { cli: "codex", effort: "high", session_id: "legacy-session" } });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const claimed = TaskClaimOutputSchema.parse(result.value);
+    expect(claimed.attempt.executor.model).toBeUndefined();
+    expect(claimed.attempt.executor.model_source).toBeUndefined();
+    expect(claimed.task.executor).toEqual({ cli: "codex", effort: "high" });
+    // The plan is not erased: it stays in the column, unread.
+    expect((await world.db.select().from(task))[0]?.harness).toMatchObject({ model: daybreak });
+  });
 
   it("rejects an unregistered model without taking the card", async () => {
     await setup();

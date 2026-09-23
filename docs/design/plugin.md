@@ -83,8 +83,9 @@ Five lifecycle hook capabilities ship as POSIX shell scripts:
    the commit. Default: on.
 3. `Stop` queries claims owned by the current token and blocks while any remain in
    execution. Default: off; set `enforce_stop=1` in private plugin config.
-4. `PreToolUse` before `task_create` asks the board for the current harness and
-   compares it with the card input. Default: off; set `enforce_harness=1`.
+4. (Removed in OCL-202: a `PreToolUse` guard on `task_create` compared the card with
+   `harness_recommend`. The board no longer plans a harness, so there is nothing to
+   compare against.)
 5. The claim guard records `.overclick/claim.json` after `task_claim`, removes it
    after `task_deliver` or `task_release`, and checks it before `Edit`, `Write`, or
    a mutating `Bash` command. A missing marker falls back to `task_list` on the
@@ -188,8 +189,9 @@ fallback; `OVERCLICK_AGENTS_FALLBACK=1` enables that reference when an additiona
 unrecognized CLI also needs it.
 
 The package keeps generic instance and token inputs. It contains no internal routing
-menu, organization names, deployment authority, or private endpoint. Live harness
-selection always comes from `harness_recommend` on the connected board.
+menu, organization names, deployment authority, or private endpoint. Harness selection is
+not the board's: it happens where the work is launched, and the board records what the
+claim declared.
 
 ## Kimi Code, validated hands-on (OCL-106)
 

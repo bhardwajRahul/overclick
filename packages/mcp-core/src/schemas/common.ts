@@ -106,12 +106,16 @@ export const ReadOptionsSchema = z.object({
 
 /**
  * Row-scoped groups for task_list/task_search. The default row answers "what
- * exists and in what state"; every uuid, delivery flag and the planned
- * harness ride behind one of these instead of paying for a screenful of ids
- * nobody reads (every tool already accepts `short_id`).
+ * exists and in what state"; every uuid and delivery flag rides behind one of
+ * these instead of paying for a screenful of ids nobody reads (every tool
+ * already accepts `short_id`).
  */
 export const ListIncludeSchema = z.enum([
-  /** The planned harness (cli, model, effort) — needed to dispatch a card. */
+  /**
+   * Deprecated (OCL-202): cards no longer carry a planned harness. Still
+   * accepted for one release so an old dispatcher is not refused; it adds
+   * nothing to the rows and the answer carries a warning.
+   */
   "harness",
   /** Uuids: the card's own `id`. */
   "ids",
@@ -189,17 +193,34 @@ export const DEFAULT_REVIEWER = {
   kind: "workspace_queue",
 } as const;
 
+/**
+ * The planned harness a card used to carry. Deprecated (OCL-202): the board
+ * records what ran and the Overclock app decides what runs, so nothing stores
+ * this anymore. It survives one release only as an input that task_create and
+ * task_update accept, ignore and answer with a warning, so a caller written
+ * against the old contract is not refused.
+ */
 export const HarnessSchema = z.object({
   cli: z.string().min(1).optional(),
   model: z.string().min(1),
   effort: EffortSchema,
-  /**
-   * Which account/provider of `cli` runs this card (e.g. a second Claude
-   * OAuth account). Optional and retrocompatible: omitted means any account
-   * of that cli, today's behavior. Free text and leniently validated — the
-   * board does not own the canonical account list, Overclock does.
-   */
   account: z.string().min(1).nullable().optional(),
+});
+
+/** How the deprecated `harness` inputs describe themselves to an agent. */
+export const DEPRECATED_HARNESS_INPUT =
+  "Deprecated and ignored (OCL-202): the board no longer plans a harness. The Overclock app decides what runs; the board records what ran from task_claim's executor (cli, model, effort). Accepted for one release with a warning in the answer.";
+
+/**
+ * What the card ran on, as its latest task_claim declared it (OCL-202): the
+ * board records the harness that executed and never plans one. Absent until
+ * the card is claimed. `model` is the attempt's model, corrected by measured
+ * usage at delivery; `effort` is only ever what the executor declared.
+ */
+export const CardExecutorSchema = z.object({
+  cli: z.string().min(1).optional(),
+  model: z.string().min(1).optional(),
+  effort: EffortSchema.optional(),
 });
 
 /**
@@ -315,7 +336,7 @@ export const SubtaskCreateSchema = z.object({
   o_que: z.string().min(1).optional(),
   por_que: z.string().min(1).optional(),
   como_confirmo: z.array(ConfirmationStepSchema).optional(),
-  harness: HarnessSchema.optional(),
+  harness: HarnessSchema.optional().describe(DEPRECATED_HARNESS_INPUT),
   devolve_para: ReviewerSchema.optional(),
 });
 
@@ -498,7 +519,11 @@ export const TaskSchema = TaskSummarySchema.extend({
   o_que: z.string(),
   por_que: z.string(),
   como_confirmo: z.array(ConfirmationStepSchema),
-  harness: HarnessSchema.nullable(),
+  /**
+   * What the card ran on, from its latest task_claim. Present on reads and on
+   * the answers that already hold the attempt; absent on a card never claimed.
+   */
+  executor: CardExecutorSchema.optional(),
   origem: OrigemSchema,
   mode: ExecutionModeSchema,
   branch: z.string().min(1).nullable(),
@@ -531,7 +556,6 @@ export const TaskReadSchema = TaskSchema.omit({
   parent_id: true,
   supersedes: true,
   superseded_by: true,
-  harness: true,
   branch: true,
   pull_request_url: true,
   resolved_in: true,
@@ -547,7 +571,6 @@ export const TaskReadSchema = TaskSchema.omit({
   parent_id: z.string().min(1).optional(),
   supersedes: z.string().min(1).optional(),
   superseded_by: z.string().min(1).optional(),
-  harness: HarnessSchema.optional(),
   branch: z.string().min(1).optional(),
   pull_request_url: z.string().url().optional(),
   resolved_in: z.string().min(1).optional(),
@@ -556,12 +579,11 @@ export const TaskReadSchema = TaskSchema.omit({
   reports_count: z.number().int().positive().optional(),
 });
 
-/** Queue rows stay metadata-only while carrying the planned harness. */
 /**
  * The task_list default row: the operational minimum that answers "what
  * exists and in what state" without a single uuid. Everything else — ids,
- * refs, delivery flags, the planned harness — rides behind `include`; see
- * `ListIncludeSchema`. `include: ["all"]` reproduces every field below.
+ * refs, delivery flags — rides behind `include`; see `ListIncludeSchema`.
+ * `include: ["all"]` reproduces every field below.
  */
 export const TaskListItemSchema = TaskReadSchema.pick({
   short_id: true,
@@ -587,8 +609,6 @@ export const TaskListItemSchema = TaskReadSchema.pick({
   delivery_verification: DeliveryVerificationSchema.optional(),
   delivery_warning: z.string().min(1).optional(),
   reports_count: z.number().int().positive().optional(),
-  // include: ["harness"]
-  harness: HarnessSchema.optional(),
 });
 
 export const ExecutionAttemptSchema = z.object({
@@ -692,6 +712,7 @@ export type ConfirmationStep = z.infer<typeof ConfirmationStepSchema>;
 export type Origem = z.infer<typeof OrigemSchema>;
 export type Reviewer = z.infer<typeof ReviewerSchema>;
 export type Harness = z.infer<typeof HarnessSchema>;
+export type CardExecutor = z.infer<typeof CardExecutorSchema>;
 export type Usage = z.infer<typeof UsageSchema>;
 export type UsageSegment = z.infer<typeof UsageSegmentSchema>;
 export type TranscriptRefWire = z.infer<typeof TranscriptRefSchema>;

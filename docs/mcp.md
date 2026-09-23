@@ -52,22 +52,21 @@ context are listed there with a short excerpt and a pointer to `project_get`.
 | `mission_attempt_start` | opens the mission's orchestration attempt and its measurement window; records mission/project, effective CLI/model/session and transcript reference |
 | `mission_report_usage` | records a cumulative orchestration snapshot for one dispatch round or the final checkpoint; retries are idempotent by attempt and sequence |
 | `task_list` | the queue, one lean row per card: `short_id`, `title`, `type`, `status`, `priority`, `cost_usd`, plus `delivery_unverified` only when `true`. No uuid on the row — every tool already accepts `short_id`. Filtered by project, `mission_id`, exact `resolved_in`, status, priority, `claimed_by: "me"`, `awaiting_review_by` and `limit` |
-| | The rest rides behind `include`, in named groups: `["harness"]` (planned CLI/model/effort — needed to dispatch, since the default row no longer carries it), `["ids"]` (the card's own `id`), `["refs"]` (`mission_id`, `project_id`, `branch`, `claimed_by`), `["delivery"]` (`commit`, `delivery_verification`, `delivery_warning`, `reports_count`, `revisado`, `devolve_para`), or `["all"]` for every group at once — `include: ["all"]` reproduces the pre-OCL-96 full row |
+| | The rest rides behind `include`, in named groups: `["ids"]` (the card's own `id`), `["refs"]` (`mission_id`, `project_id`, `branch`, `claimed_by`), `["delivery"]` (`commit`, `delivery_verification`, `delivery_warning`, `reports_count`, `revisado`, `devolve_para`), or `["all"]` for every group at once — `include: ["all"]` reproduces the pre-OCL-96 full row. `["harness"]` is still accepted for one release after OCL-202 and adds nothing: the answer carries a `warnings` entry, because cards no longer plan a harness |
 | | `limit` defaults to 50 and caps at 200. The response carries `truncated` and the `limit` it used, so a caller can tell a full queue from a cut one instead of reading a page as the whole board |
-| `task_get` | the card contract, branch and latest attempt's frozen cost/status by default; unset fields and `workspace_id` are omitted. The heavy briefing, recipe, mission and comments are opt-in with `view: "briefing"`/`"full"` or `include: ["briefing", "usage_recipe", "mission", "comments"]` |
+| `task_get` | the card contract, branch, `executor` (the `cli`, `model` and `effort` the card's latest claim ran on, absent before the first claim) and latest attempt's frozen cost/status by default; unset fields and `workspace_id` are omitted. The heavy briefing, recipe, mission and comments are opt-in with `view: "briefing"`/`"full"` or `include: ["briefing", "usage_recipe", "mission", "comments"]` |
 | | `include: ["comments"]` returns every prose comment and delivery report on the card, oldest first, as `{author, kind, body, created_at}` — the same list `task_claim`'s briefing embeds. Typed timeline entries (executor swaps, stale-claim takeovers) are not comments and are left out |
-| `task_create` | creates the card (`mission` is an existing mission id, `mode` solo\|team, origin); by default it returns only the short id, status, `updated_at` and generated `changed` fields. Pass `return: "full"` for the card and subtasks. `supersedes` atomically discards an in-execution predecessor, and `inherit: true` reuses its contract without copying comments |
+| `task_create` | creates the card (`mission` is an existing mission id, `mode` solo\|team, origin) with no harness: *what / why / how to confirm* are the whole contract, and the claim records what runs it. A `harness` (or `subtasks[].harness`) sent by an older client is ignored and answered with a `warnings` entry for one release, never refused; by default it returns only the short id, status, `updated_at` and generated `changed` fields. Pass `return: "full"` for the card and subtasks. `supersedes` atomically discards an in-execution predecessor, and `inherit: true` reuses its contract without copying comments |
 | | `project_id` takes the project uuid **or** its card prefix (`AGB`), so an agent that just called `project_list` never needs the uuid |
 | `task_search` | search the queue by text (`q`) and metadata filters, including exact `resolved_in`. Hits default to `short_id`, `title`, `type`, `status` and `o_que` (cut at 300 chars), no uuid; same `include` groups as `task_list` — `["ids"]` adds `id`, `["refs"]` adds `resolved_in`, `["delivery"]` adds `comments_count`, `reports_count` and `updated_at`, `["all"]` returns every field |
 | `task_claim` | status → `em_execucao`; a second active claim → `ALREADY_CLAIMED`. A claim whose attempt has had no `task_update` or `task_heartbeat` beyond the workspace timeout (60 minutes by default) is reclaimable without `force`: the old attempt becomes `abandoned` with reason `stale`, its usage is preserved, the timeline records the takeover and the response carries `reclaimed_stale: true` |
-| | A card claimed again after a delivery was reopened comes back one link down its chain, and the briefing says which try this is. Only reviewed deliveries count: an attempt ended with `force` is a restart, not a verdict, and a harness pinned by hand off the chain is never escalated |
-| | when the claiming executor differs from the card harness, the response carries a `harness_divergence` warning and the card timeline automatically records an executor swap entry naming planned vs actual |
+| | `executor` is what the card records as the harness that ran it: send the `cli`, the exact `model` and the `effort` this session actually runs with. Every field stays optional, so an older client that never sent `effort` still claims; the briefing then says the effort went undeclared. The board does not compare the claim to any plan and never moves a card to another model (OCL-202): that choice is made where the work is launched |
 | `task_release` | returns a card in execution to open, closes its current attempt as `abandoned` with the supplied `reason`, and preserves every usage counter already stored. The default response is a compact acknowledgement; pass `return: "full"` for the task and attempt. The token that owns the claim may release it; a token with `manage` may release any claim in its workspace |
 | `task_heartbeat` | renews an open attempt's activity lease for a long run. The default response is a compact acknowledgement; pass `return: "full"` for `last_activity_at` plus `expires_at`. The claiming token (or a manage token) may heartbeat it; it adds no timeline prose |
-| `task_update` | progress, comment (`comment_kind` supports `report` to increment `reports_count`), `resolved_in` metadata (string or `null`), the `revisado` mark, a new `harness` (validated against executors), or a `usage` block that fills or corrects the latest attempt's telemetry, even after deliver/discard. The default response is a compact acknowledgement with the changed fields; pass `return: "full"` for the complete card and usage details. On a `feito` card, `status: "validado"` requires a nonblank `comment` citing who validated in chat and what they said; the timeline labels it as human validation recorded by the agent and shows the agent as author. The status and citation are stored together. Other source states are refused; only the board UI can desvalidate. Managed tokens may send `status: descartado` with `superseded_by` |
+| `task_update` | progress, comment (`comment_kind` supports `report` to increment `reports_count`), `resolved_in` metadata (string or `null`), the `revisado` mark, or a `usage` block that fills or corrects the latest attempt's telemetry, even after deliver/discard. The default response is a compact acknowledgement with the changed fields; pass `return: "full"` for the complete card and usage details. On a `feito` card, `status: "validado"` requires a nonblank `comment` citing who validated in chat and what they said; the timeline labels it as human validation recorded by the agent and shows the agent as author. The status and citation are stored together. Other source states are refused; only the board UI can desvalidate. Managed tokens may send `status: descartado` with `superseded_by`. A `harness` sent by an older client is ignored with a `warnings` entry for one release; the rest of the update still applies |
 | | `mission_id`: moves the card between missions after it was created, `null` detaches it. Only missions of the token's workspace qualify; anything else is a `NOT_FOUND`, never a silent detach. Subtasks follow their parent, and the response says how many in `subtasks_moved`. On the board the same move is a select in the card detail, and a bulk bar that assigns a whole selection at once |
 | | `project_id`: moves the card to another project of the same workspace. This is how a board gets reorganized without deleting anything, and it is a field on `task_update` rather than a `task_move` tool because a move is one more thing a card can change, like its mission. The card is **restamped** with the destination prefix (`FUN-1` landing in `MKT` becomes `MKT-7`), consuming the destination's `next_number` so the numbering advances without colliding with a card already there. The id it had is kept on the card in `previous_short_ids` and the response returns the whole old-to-new mapping in `project_move {from_prefix, to_prefix, short_ids: [{from, to}]}`, so branches, commits and PR titles that name the old ids can be fixed. Subtasks travel with their parent and are restamped with it (`FUN-1.1` → `MKT-7.1`), counted in `subtasks_moved`; a subtask cannot be moved on its own, because its id is derived from its parent and it would land orphaned in a project its id does not belong to. `mission_id` is untouched: missions are workspace wide and cross projects by design. Naming the project the card is already in changes nothing and returns no `project_move` |
-| | `spawn_failure`: a boot-failure note an orchestrator posts when the planned executor never started (CLI missing, crash on boot); it lands as a typed timeline entry with the planned harness attached and both entries render in the card detail under "Execution trace" |
+| | `spawn_failure`: a boot-failure note an orchestrator posts when the executor it launched never started (CLI missing, crash on boot); it lands as a typed timeline entry and renders in the card detail under "Execution trace" |
 | `task_deliver` | result + commit + branch + usage; status → `feito`; routed to the card's reviewer. The default response is a compact acknowledgement with the handoff id and delivery telemetry; pass `return: "full"` for the task and handoff |
 | | Create and push the commit **before** calling `task_deliver`; a modified working tree is not a delivery. The board checks the commit against the project remote when it can and accepts a failure with `delivery_unverified` plus `commit não encontrado no remoto` |
 | | `usage` is required by contract: report exact numbers when your harness exposes them, otherwise **estimate** tokens, turns and duration and set `estimated: true` (the card labels the numbers "estimated"). Tokens and time are what the board asks for; `cost_usd` is optional and only used when the board cannot price the run itself. A delivery without usage still lands, but the response carries a warning and the card shows "usage not reported". |
@@ -76,20 +75,15 @@ context are listed there with a short excerpt and a pointer to `project_get`.
 | | optional `how_to_verify`: a URL, command or screenshot reference the reviewer opens first. It is shown on top of the validation panel in the Done detail ("For checking, open"). |
 | `task_delete` | hard delete: removes the card plus attempts, handoffs and subtasks (irreversible) |
 | `branch_register` | records the branch on the card |
-| `harness_recommend` | policy lookup (activity type → CLI · chain · effort) |
-| | The answer names the model that will actually run. `chain` is the declared line of succession, best first, and `chain_position` says which link answered: `0` is the first choice, anything higher means the board moved down the line, and `divergence` says why. Two things move it: a model that is not on a configured executor, and `attempt`, which starts the walk lower so a card whose delivery was reopened does not come back on the model that just failed review |
-| `harness_list` | the whole policy + configured executors, each line carrying its `chain`, `updated_by` and `updated_at` |
-| `harness_set` | writes one policy line (`type`, optional `cli`, `model` and/or `chain`, `effort`), validated against the configured executors and stamped with the token label. The default response is a compact acknowledgement; pass `return: "full"` for the complete policy line. **Needs a manage token** (see below); `cli` omitted means no preference |
-| | `chain` is the whole line, best first, up to 8 deep; `model` alone still works and reads as a chain of one. The write is refused only when **no** link resolves, so a first choice on an executor you have switched off is a legal thing to declare: that is what a successor is for. The `cli` pin applies to the head only, because past the first choice the point of the fallback is to leave that CLI behind |
 | `insights_query` | tokens and time over the workspace, plus the reopened rate per model. Readable with any token |
 | | Money is opt-in and off by default: `pricing_enabled: false` comes back with every `cost_usd` null, never a zero standing in for "no cost to report", because on a flat subscription a dollar figure is fiction. Turn the cost layer on in Settings and the board reads the frozen attempt figures, labeled by source. Editing a price affects the next deliver/task_update, not historical snapshots |
 | | `group_by=model` reads the segments, so a run that switched model lands in both model groups with the tokens each one actually spent, each priced at its own rate. Those groups carry `shared_attempts`: the runs that touched more than one model. Their duration lands whole in every model the run touched, because nothing records how the wall clock split, so per-model durations overlap instead of adding up to the total |
 | | `group_by` project, mission, release, model, executor or card (omit it for totals and the reopen rate only), `since` and `until` to narrow the period. Release groups use the card's exact `resolved_in`; a null label is the "no release" bucket. Same rows and same aggregation the Insights page runs, so a number never disagrees with the screen: only finished attempts count, example cards stay out, `estimated`, `missing`, `zero_usage`, `suspect` and `delivery_unverified` come back as honesty counters. Card rows also carry `unpriced_models` and `unpriced_tokens`, so an unknown cost says `no price for X`; absent counters say `not reported`; explicit zero counters say `usage reported as zero`. None becomes a fake `$0`. The period narrows attempts by when they finished; reopens are not narrowed, so a delivery reopened later still counts |
 | `executors_update` | adds or removes CLIs and models in the executor config, in the shape the Settings grid saves. The default response is a compact acknowledgement; pass `return: "full"` for the complete executor config. **Needs a manage token** |
-| | one `cli` per call (the board id, or the binary name an agent sends: `claude` resolves to `claude-code`), plus `add_models`, `remove_models`, `enabled`, `label`, or `remove: true` to drop the CLI entirely. Adding models turns the CLI on unless `enabled: false` says otherwise, because an unchecked model is invisible to the policy selects and to card harnesses. When a change orphans a policy line, the response carries `policy_warnings` naming what `harness_set` has to fix |
+| | one `cli` per call (the board id, or the binary name an agent sends: `claude` resolves to `claude-code`), plus `add_models`, `remove_models`, `enabled`, `label`, or `remove: true` to drop the CLI entirely. Adding models turns the CLI on unless `enabled: false` says otherwise, because an unchecked model is refused when a `task_claim` declares it. This is the catalog claims are checked against, not a routing table |
 
 Write compatibility: `project_update`, `mission_update`, `task_create`, `task_release`,
-`task_heartbeat`, `task_update`, `task_deliver`, `harness_set` and `executors_update`
+`task_heartbeat`, `task_update`, `task_deliver` and `executors_update`
 return a compact acknowledgement by default. The acknowledgement carries the row's
 identifier, `updated_at`, and a `changed` object containing only fields written or
 generated by that mutation; task writes also carry the resulting `status`. Pass
@@ -105,10 +99,10 @@ List compatibility (OCL-96, following the default-lean precedent OCL-52 set for
 `task_list`/`task_search`): the row default dropped further, to the operational
 minimum — `task_list` now sends only `short_id`, `title`, `type`, `status`,
 `priority`, `cost_usd` and `delivery_unverified` (the last only when `true`); no
-uuid, `revisado`, `devolve_para`, delivery flags or harness ride on the default row
+uuid, `revisado`, `devolve_para` or delivery flags ride on the default row
 anymore, and `task_search` hits default to `short_id`, `title`, `type`, `status`
-and `o_que`. Callers that dispatched straight off `task_list` (planned CLI/model/
-effort on the row) must add `include: ["harness"]`. Callers that need the rest of
+and `o_que`. (The `["harness"]` group that once carried the planned CLI/model/
+effort is empty since OCL-202: cards no longer plan one.) Callers that need the rest of
 the old full row — uuids, refs, delivery detail — add `include: ["ids"]`,
 `["refs"]`, `["delivery"]`, or `["all"]` for every group at once, which reproduces
 the pre-OCL-96 row exactly.
@@ -240,12 +234,12 @@ caller can run it without parsing markdown. `yields` is `tokens_per_model` when 
 command prints real numbers and `no_tokens` when the CLI records none on disk, in which
 case the honest move is estimating and saying so. The shipped Claude Code and Codex
 recipes print the `segments` shape `task_deliver` takes. The Codex recipe is bound at
-claim time to `claimed_at`, the declared session id and harness model. Every shipped
+claim time to `claimed_at`, the declared session id and the model the claim declared. Every shipped
 recipe that reads a transcript filters entries to timestamps at or after `claimed_at`;
 work that was already in the same session before the claim is not usage for this card.
 The Codex recipe reads only that rollout's
 `turn_context.payload.model` and `last_token_usage` deltas, normalizes model names such as
-`gpt-5.6-sol` to the pricing slug `gpt-5-6-sol`, and uses the harness model only when an
+`gpt-5.6-sol` to the pricing slug `gpt-5-6-sol`, and uses the claimed model only when an
 older readable rollout has no model field. It returns `estimated: false` for measured
 rollouts; a missing or unreadable rollout returns `estimated: true` plus the reason, never
 an invented default such as `o4-mini`, `gpt-5`, or `unknown`. Recipes are editable in
@@ -275,8 +269,8 @@ commands run.
 ## The manage flag
 
 Reading the board is what a worker token is for. Rewriting the workspace configuration is
-not: a token that can move the harness policy can promote itself to a better model between
-two claims. So the configuration tools sit behind a per-token **manage** flag, off by
+not: a token that can rewrite the executor catalog decides which models a claim may
+declare. So the configuration tool sits behind a per-token **manage** flag, off by
 default.
 
 Tick "This token can change the workspace configuration" when generating the token in
@@ -287,13 +281,10 @@ token is unchanged: same URL, same header, same tools for claiming and deliverin
 
 Untick the box to take the capability back. Revoked tokens cannot be granted anything.
 
-The configuration tools behind it are `harness_set` and `executors_update`. The flag also
-lets an owner release or heartbeat another token's stuck claim; the claiming token can
-always manage its own lease. Without the flag, configuration writes answer
-with a typed `PERMISSION_DENIED` and change nothing. The harness policy also keeps a
-trail: every line records who wrote it last (an email from Settings, the token label from
-`harness_set`) and when, shown in the Settings policy table and returned by
-`harness_list`.
+The configuration tool behind it is `executors_update` (`harness_set` went away with the
+harness policy in OCL-202). The flag also lets an owner release or heartbeat another
+token's stuck claim; the claiming token can always manage its own lease. Without the flag,
+configuration writes answer with a typed `PERMISSION_DENIED` and change nothing.
 
 ## Errors
 
@@ -304,7 +295,7 @@ error and the details stay in the server logs.
 
 | Code | Meaning and next step |
 |---|---|
-| `NOT_FOUND` | the id does not exist in the token's workspace; the message points to `task_list`, `project_list`, `mission_list` or `harness_list` |
+| `NOT_FOUND` | the id does not exist in the token's workspace; the message points to `task_list`, `project_list` or `mission_list` |
 | `INVALID_TRANSITION` | the call does not fit the card status; for example, delivering an open card returns "Card is open, call task_claim before task_deliver." |
 | `ALREADY_CLAIMED` | another executor holds the card; retry with `force: true` to take over |
 | `INVALID_ARGUMENT` | the input failed validation; the message names the field |

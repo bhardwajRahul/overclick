@@ -71,7 +71,7 @@ board snapshot, and the `PostToolUse` bookkeeping that records or clears the loc
 marker after `task_claim` / `task_deliver` / `task_release`.
 
 The **enforcement** guards are opt-in and ship disabled (`enforce_claim=0`,
-`enforce_stop=0`, `enforce_harness=0` in the config file). `claim-guard.mjs` is the one
+`enforce_stop=0` in the config file). `claim-guard.mjs` is the one
 matched on every tool: with `enforce_claim=0` it exits silently without inspecting
 anything, and only when you deliberately turn it on does it block a write that has no
 claimed card behind it. Turning it on is a choice you make about your own workflow.

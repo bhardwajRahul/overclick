@@ -4,7 +4,6 @@ import type { AutoUpdateRecord, UpdateMode } from "@agent-board/db";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { saveClaimTimeoutAction } from "../../actions/claims";
-import { saveCardapioAction, type CardapioInput } from "../../actions/cardapio";
 import { addSeenExecutorAction, saveExecutorsAction } from "../../actions/executors";
 import { saveLanguageAction } from "../../actions/language";
 import { savePricesAction, savePricingEnabledAction } from "../../actions/prices";
@@ -28,10 +27,7 @@ import {
   type ExecutorSelection,
 } from "../../components/executors-grid";
 import {
-  CUSTOM_EXECUTOR_ID,
   EXECUTOR_CATALOG,
-  cardapioLabel,
-  modelsForCli,
   resolveCatalogCli,
 } from "../../lib/executors";
 import { LANGUAGES, dict, type Dict } from "../../lib/i18n";
@@ -54,19 +50,6 @@ import type {
   UsageRecipeRow,
 } from "@agent-board/db";
 
-type CardapioRow = {
-  activityType: string;
-  cli: string | null;
-  model: string | null;
-  /** Line of succession, best first. The head is what `model` also holds. */
-  chain: string[];
-  effort: string;
-  updatedBy: string | null;
-  updatedAt: string | null;
-};
-
-/** How many links a row shows: first choice, escalation, floor. */
-const CHAIN_SLOTS = 3;
 type SeenSuggestion = { cli: string; model: string; count: number; lastSeenAt: string };
 /** One line of the price table, as the form edits it (numbers stay strings). */
 type PriceRow = {
@@ -89,8 +72,6 @@ type TokenRow = {
   createdAt: string;
   lastUsedAt: string | null;
 };
-
-const EFFORTS = ["low", "medium", "high"] as const;
 
 function fmtDate(iso: string, locale: string): string {
   return new Date(iso).toLocaleDateString(locale, { day: "2-digit", month: "short", year: "numeric" });
@@ -115,7 +96,6 @@ export function SettingsClient({
   projects,
   executors,
   seenSuggestions,
-  cardapio,
   prices,
   pricingEnabled,
   claimTimeoutMinutes,
@@ -144,7 +124,6 @@ export function SettingsClient({
   projects: ProjectContextRow[];
   executors: ExecutorSelection;
   seenSuggestions: SeenSuggestion[];
-  cardapio: CardapioRow[];
   prices: ModelPriceRow[];
   pricingEnabled: boolean;
   claimTimeoutMinutes: number;
@@ -190,7 +169,6 @@ export function SettingsClient({
     { id: "exec", label: t.settings.tabExecutors },
     { id: "organizations", label: t.settings.tabOrganizations },
     { id: "projects", label: t.settings.tabProjects },
-    { id: "policy", label: t.settings.tabPolicy },
     { id: "prices", label: t.settings.tabPrices },
     { id: "recipes", label: t.settings.tabRecipes },
     { id: "tokens", label: t.settings.tabTokens },
@@ -246,8 +224,8 @@ export function SettingsClient({
       if (!r.ok) setErr(r.error);
       else {
         const targetId = resolveCatalogCli(s.cli) ?? s.cli.toLowerCase();
-        // Mirror the server change locally so the grid and the policy
-        // selects pick the pair up without a reload.
+        // Mirror the server change locally so the grid picks the pair up
+        // without a reload.
         setSel((prev) => ({
           ...prev,
           models: {
@@ -266,52 +244,6 @@ export function SettingsClient({
         setMsg(t.settings.addedMsg(s.cli, s.model));
         router.refresh();
       }
-    });
-
-  // ---- harness policy (cardapio)
-  const [rows, setRows] = useState<CardapioRow[]>(cardapio);
-  const cliOptions = [
-    ...Object.keys(sel.enabled).map((id) => ({
-      id,
-      label: EXECUTOR_CATALOG.find((d) => d.id === id)?.label ?? sel.labels[id] ?? id,
-    })),
-    ...(sel.customEnabled
-      ? [{ id: CUSTOM_EXECUTOR_ID, label: sel.customName.trim() || "Custom" }]
-      : []),
-  ];
-  const modelsFor = (cli: string | null): string[] => modelsForCli(sel, cli);
-  const setRow = (i: number, patch: Partial<CardapioRow>) => {
-    setRows(rows.map((r, j) => {
-      if (j !== i) return r;
-      const next = { ...r, ...patch };
-      if (patch.cli !== undefined) {
-        const models = modelsFor(patch.cli || null);
-        if (!next.model || !models.includes(next.model)) next.model = models[0] ?? null;
-      }
-      return next;
-    }));
-  };
-  /**
-   * Writes one link of the line of succession. Blanking a link closes the gap
-   * rather than leaving a hole, and the head keeps `model` in step: that field
-   * is what the card and the MCP contract print.
-   */
-  const setChainLink = (i: number, slot: number, model: string) => {
-    setRows(rows.map((r, j) => {
-      if (j !== i) return r;
-      const chain = [...r.chain];
-      while (chain.length < CHAIN_SLOTS) chain.push("");
-      chain[slot] = model;
-      const kept = chain.filter((name, at) => name && chain.indexOf(name) === at);
-      return { ...r, chain: kept, model: kept[0] ?? null };
-    }));
-  };
-  const savePolicy = () =>
-    start(async () => {
-      setErr(null); setMsg(null);
-      const r = await saveCardapioAction(rows as CardapioInput[]);
-      if (!r.ok) setErr(r.error);
-      else { setMsg(t.settings.policySaved); router.refresh(); }
     });
 
   // ---- cost layer, opt-in and off by default
@@ -592,88 +524,6 @@ export function SettingsClient({
           <div className="save-row">
             <button className="btn-new" disabled={pending} onClick={saveExec}>
               {pending ? t.settings.saving : t.settings.saveExecutors}
-            </button>
-          </div>
-        </div>
-
-        {/* ---- HARNESS POLICY ---- */}
-        <div
-          className={`tabpane${tab === "policy" ? " active" : ""}`}
-          id="setpane-policy"
-          role="tabpanel"
-          aria-labelledby="settab-policy"
-        >
-          <div className="set-scroll">
-          <table className="policy harness">
-            <thead>
-              <tr><th>{t.settings.thActivity}</th><th>{t.settings.thCli}</th><th>{t.settings.thModel}</th><th>{t.settings.thEffort}</th><th>{t.settings.thLastChange}</th></tr>
-            </thead>
-            <tbody>
-              {rows.map((r, i) => {
-                const meta = t.cardapio[r.activityType] ?? cardapioLabel(r.activityType);
-                const models = modelsFor(r.cli);
-                return (
-                  <tr key={r.activityType}>
-                    <td className="act">{meta.label}<small>{meta.hint}</small></td>
-                    <td data-label={t.settings.thCli}>
-                      <select className="sel" value={r.cli ?? ""} onChange={(e) => setRow(i, { cli: e.target.value || null })}>
-                        <option value="">{t.settings.noPreference}</option>
-                        {cliOptions.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
-                      </select>
-                    </td>
-                    <td className="chain" data-label={t.settings.thModel}>
-                      {Array.from({ length: CHAIN_SLOTS }, (_, slot) => {
-                        const picked = r.chain[slot] ?? "";
-                        // A model the policy names but this CLI no longer
-                        // offers stays selectable, so opening Settings never
-                        // silently rewrites a line somebody declared.
-                        const orphan = picked && !models.includes(picked);
-                        return (
-                          <span key={slot} className="link">
-                            {/* the glyph itself is CSS: across on a desktop
-                                row, downward once the row becomes a block */}
-                            {slot > 0 ? <i aria-hidden="true" /> : null}
-                            <select
-                              className={`sel${orphan ? " orphan" : ""}`}
-                              aria-label={t.settings.chainSlot(slot + 1, meta.label)}
-                              value={picked}
-                              onChange={(e) => setChainLink(i, slot, e.target.value)}
-                            >
-                              {/* the head of the chain declares a model or it
-                                  declares none: a word, not a dash nobody can
-                                  read out of a closed select */}
-                              <option value="">{slot === 0 ? t.settings.noPreference : t.settings.chainNone}</option>
-                              {orphan ? <option value={picked}>{picked}</option> : null}
-                              {models.map((m) => <option key={m} value={m}>{m}</option>)}
-                            </select>
-                          </span>
-                        );
-                      })}
-                    </td>
-                    <td data-label={t.settings.thEffort}>
-                      <select className="sel eff" value={r.effort} onChange={(e) => setRow(i, { effort: e.target.value })}>
-                        {EFFORTS.map((e2) => <option key={e2} value={e2}>{e2}</option>)}
-                      </select>
-                    </td>
-                    <td className="who" data-label={t.settings.thLastChange}>
-                      {r.updatedBy && r.updatedAt ? (
-                        <>{r.updatedBy}<small>{fmtDate(r.updatedAt, dateLocale)}</small></>
-                      ) : (
-                        <span className="dim">{t.settings.neverChanged}</span>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-          </div>
-          <div className="policy-note">
-            {t.settings.policyNote} <b>harness_list</b> {t.settings.policyNoteAfter}
-          </div>
-          <div className="save-row">
-            <button className="btn-new" disabled={pending} onClick={savePolicy}>
-              {pending ? t.settings.saving : t.settings.savePolicy}
             </button>
           </div>
         </div>

@@ -1,8 +1,5 @@
 import {
-  DEFAULT_CARDAPIO,
   KNOWN_EXECUTORS,
-  cardapioEntry,
-  factoryCardapioPolicy,
   user,
   workspace,
 } from "@agent-board/db";
@@ -26,24 +23,12 @@ export async function ensureWorkspace(): Promise<{ id: string }> {
     .values({
       name: "Agent Board",
       executors: KNOWN_EXECUTORS,
-      cardapio: DEFAULT_CARDAPIO,
     })
     .returning({ id: workspace.id });
 
+  // No harness policy is seeded (OCL-202): the board records which harness
+  // ran a card, the Overclock app decides which one runs.
   if (!created) throw new Error("failed to create workspace");
-
-  await db()
-    .insert(cardapioEntry)
-    .values(
-      factoryCardapioPolicy().map((row) => ({
-        workspaceId: created.id,
-        activityType: row.type,
-        cli: row.cli,
-        model: row.model,
-        chain: row.chain,
-        effort: row.effort,
-      })),
-    );
 
   return created;
 }

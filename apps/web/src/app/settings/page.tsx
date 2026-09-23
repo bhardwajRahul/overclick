@@ -2,9 +2,7 @@ import { asc, count, desc, eq, isNotNull, and } from "drizzle-orm";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import {
-  cardapioEntry,
   executionAttempt,
-  factoryCardapioPolicy,
   findModelPrice,
   mcpToken,
   mission,
@@ -42,7 +40,6 @@ const SETTINGS_TABS = new Set([
   "exec",
   "organizations",
   "projects",
-  "policy",
   "prices",
   "recipes",
   "tokens",
@@ -110,30 +107,6 @@ export default async function SettingsPage({
   const missionCounts = new Map(
     missionsPerOrganization.map((row) => [row.organizationId, Number(row.n)]),
   );
-
-  const entries = await db()
-    .select()
-    .from(cardapioEntry)
-    .where(eq(cardapioEntry.workspaceId, ws.id));
-
-  // The table always shows every type: what is already stored overrides the
-  // factory policy, the rest shows the default the agent already uses.
-  const stored = new Map(entries.map((e) => [e.activityType, e]));
-  const cardapioRows = factoryCardapioPolicy().map((f) => {
-    const row = stored.get(f.type);
-    // A row saved before chains existed keeps its single model, which reads as
-    // a line of succession one deep. That is what it always was.
-    const chain = row ? (row.chain ?? (row.model ? [row.model] : [])) : (f.chain ?? []);
-    return {
-      activityType: f.type,
-      cli: row ? row.cli : f.cli,
-      model: row ? row.model : f.model,
-      chain: [...chain],
-      effort: row ? row.effort : f.effort,
-      updatedBy: row?.updatedBy ?? null,
-      updatedAt: row ? row.updatedAt.toISOString() : null,
-    };
-  });
 
   const tokens = await db()
     .select({
@@ -281,7 +254,6 @@ export default async function SettingsPage({
         manualCommand={updateCommand(deployMode)}
         sourceCommand={SOURCE_UPDATE_COMMAND}
         seenSuggestions={seenSuggestions}
-        cardapio={cardapioRows}
         prices={prices}
         unpricedModels={unpricedModels}
         unpricedRanModels={unpricedRanModels}

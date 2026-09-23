@@ -4,10 +4,8 @@ import {
   EXECUTOR_CATALOG,
   addModelToSelection,
   applyExecutorUpdate,
-  cardapioLabel,
   isPairInConfig,
   learnedExecutorDefs,
-  modelsForCli,
   removeModelFromSelection,
   resolveCatalogCli,
   selectionFromConfig,
@@ -127,36 +125,6 @@ describe("editable model catalog", () => {
   });
 });
 
-describe("modelsForCli (OCL-77)", () => {
-  it("offers nothing for a CLI that is switched off", () => {
-    const sel = selectionFromConfig([
-      { id: "claude-code", label: "Claude Code", enabled: true, models: ["sonnet-5"] },
-      { id: "codex", label: "Codex", enabled: false, models: ["gpt-5.6-sol"] },
-    ]);
-    expect(modelsForCli(sel, "codex")).toEqual([]);
-  });
-
-  it("still offers an enabled CLI's checked models", () => {
-    const sel = selectionFromConfig([
-      { id: "codex", label: "Codex", enabled: true, models: ["gpt-5.6-sol"] },
-    ]);
-    expect(modelsForCli(sel, "codex")).toEqual(["gpt-5.6-sol"]);
-  });
-
-  it("excludes a disabled CLI's models from the no-preference union", () => {
-    const sel = selectionFromConfig([
-      { id: "claude-code", label: "Claude Code", enabled: true, models: ["sonnet-5"] },
-      { id: "codex", label: "Codex", enabled: false, models: ["gpt-5.6-sol"] },
-    ]);
-    expect(modelsForCli(sel, null)).toEqual(["sonnet-5"]);
-  });
-
-  it("keeps the custom executor's fixed model regardless of enabled state", () => {
-    const sel = selectionFromConfig([]);
-    expect(modelsForCli(sel, CUSTOM_EXECUTOR_ID)).toEqual(["generic-mcp"]);
-  });
-});
-
 describe("learning executors from connections", () => {
   it("resolves the names agents actually send to catalog ids", () => {
     expect(resolveCatalogCli("claude")).toBe("claude-code");
@@ -182,13 +150,6 @@ describe("learning executors from connections", () => {
     expect(isPairInConfig(config, "claude-code", "Sonnet-5")).toBe(true);
     expect(isPairInConfig(config, "claude", "claude-fable-5")).toBe(false);
     expect(isPairInConfig(config, "codex", "gpt-5.6-sol")).toBe(false);
-  });
-});
-
-describe("cardapioLabel", () => {
-  it("labels the known types and returns the type itself when unknown", () => {
-    expect(cardapioLabel("bug").label).toBe("Bug");
-    expect(cardapioLabel("unknown")).toEqual({ label: "unknown", hint: "" });
   });
 });
 

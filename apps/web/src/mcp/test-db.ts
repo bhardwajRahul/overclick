@@ -3,8 +3,6 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PGlite } from "@electric-sql/pglite";
 import {
-  cardapioEntry,
-  factoryCardapioPolicy,
   mcpToken,
   mission,
   organization,
@@ -95,17 +93,6 @@ export async function createTestWorld(options?: {
     })
     .returning({ id: workspace.id });
   if (!ws) throw new Error("failed to insert workspace");
-
-  await db.insert(cardapioEntry).values(
-    factoryCardapioPolicy().map((row) => ({
-      workspaceId: ws.id,
-      activityType: row.type,
-      cli: row.cli,
-      model: row.model,
-      chain: row.chain,
-      effort: row.effort,
-    })),
-  );
 
   const [org] = await db
     .insert(organization)
