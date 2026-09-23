@@ -254,6 +254,12 @@ and `usage`; send usage as
 `segments`, one per model that ran, plus `duration_ms` and `turns`; without exact
 numbers, estimate and set `estimated: true`.
 
+**Evidence shapes.** `evidence` is a list of `{text}` / `{url}` items, and the
+shapes agents write instead are kept rather than refused (OCL-212): one string, a
+list of strings, objects with other keys (`{step, result}` becomes the text
+`step: … · result: …`) and a `url` that is not a URL (a path) moved into the text.
+Only an item with nothing to keep is refused.
+
 **The transcript reference.** `task_claim` and `task_deliver` both accept
 `transcript {cli, session_id, path, resume}`, and the card detail shows it with three copy
 actions: the path, the command that reopens the session in that CLI, and the recipe

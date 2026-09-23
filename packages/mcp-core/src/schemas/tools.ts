@@ -7,7 +7,7 @@ import {
   DEPRECATED_HARNESS_INPUT,
   DeliveryVerificationSchema,
   EffortSchema,
-  EvidenceSchema,
+  EvidenceInputSchema,
   ExecutionAttemptSchema,
   ExecutionModeSchema,
   HandoffSchema,
@@ -1100,7 +1100,7 @@ export const TaskDeliverInputSchema = z.object({
    * validation panel in the board's Done detail.
    */
   how_to_verify: z.string().min(1).optional(),
-  evidence: z.array(EvidenceSchema).default([]),
+  evidence: EvidenceInputSchema.default([]),
   artifacts: z.array(ArtifactSchema).default([]),
   branch: z.string().min(1).optional(),
   /** Commit hash that was pushed before this delivery. */
