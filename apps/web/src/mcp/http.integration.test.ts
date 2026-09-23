@@ -43,6 +43,25 @@ describe("HTTP /mcp auth", () => {
     expect(json.error.code).toBe("TOKEN_REVOKED");
   });
 
+  // OCL-214: a stateless server has no stream to offer. Answering GET with an
+  // event stream that ends at once made every live client reconnect in a loop
+  // (about 12 GETs a second in production), each one rebuilding the server.
+  it("answers GET with 405 so clients do not reopen an empty event stream", async () => {
+    world = await createTestWorld();
+    const response = await handleMcpRequest(
+      new Request("http://board.local/mcp", {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${world.secret}`,
+          Accept: "text/event-stream",
+        },
+      }),
+      { db: world.db },
+    );
+    expect(response.status).toBe(405);
+    expect(response.headers.get("allow")).toBe("POST, DELETE");
+  });
+
   it("returns 401 when the token is missing", async () => {
     world = await createTestWorld();
     const response = await handleMcpRequest(
