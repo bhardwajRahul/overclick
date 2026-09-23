@@ -13,6 +13,7 @@ import {
 } from "react";
 import { assignCardsToMissionAction } from "../../actions/missions";
 import { releaseClaimAction } from "../../actions/claims";
+import { discardTaskAction } from "../../actions/discard";
 import {
   answerOpenTaskAction,
   reopenTaskAction,
@@ -892,8 +893,72 @@ function DetailActions({
   const router = useRouter();
   const [pending, start] = useTransition();
   const [reopening, setReopening] = useState(false);
+  const [discarding, setDiscarding] = useState(false);
   const [comment, setComment] = useState("");
+  const [reason, setReason] = useState("");
   const [err, setErr] = useState<string | null>(null);
+
+  // OCL-203: the same task_update the MCP uses, so the board refuses exactly
+  // what an agent would be refused, with the same explanation.
+  const discard = () =>
+    start(async () => {
+      setErr(null);
+      const r = await discardTaskAction(card.id, reason);
+      if (!r.ok) setErr(r.error);
+      else {
+        onClose();
+        router.refresh();
+      }
+    });
+
+  if (discarding) {
+    return (
+      <div className="d-actions d-actions-reopen">
+        <textarea
+          className="d-textarea"
+          autoFocus
+          rows={3}
+          placeholder={t.detail.discardPlaceholder}
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+        />
+        {err ? <p className="d-err">{err}</p> : null}
+        <div className="d-actions-row">
+          <button
+            className="d-btn-sec oc-tappable"
+            disabled={pending}
+            onClick={() => {
+              setDiscarding(false);
+              setErr(null);
+            }}
+          >
+            {t.detail.cancel}
+          </button>
+          <button
+            className="d-btn-pri oc-tappable"
+            disabled={pending || !reason.trim()}
+            onClick={discard}
+          >
+            {pending ? t.detail.discarding : t.detail.discardConfirm}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  const discardButton = (
+    <button
+      className="d-btn-ghost oc-tappable"
+      disabled={pending}
+      onClick={() => {
+        setErr(null);
+        setDiscarding(true);
+      }}
+      title={t.detail.discardTitle}
+    >
+      {t.detail.discard}
+    </button>
+  );
 
   const release = () =>
     start(async () => {
@@ -915,6 +980,7 @@ function DetailActions({
             {card.claimInactive}
             {card.claimStale ? ` · ${t.detail.claimExpired}` : ""}
           </span>
+          {discardButton}
           <button
             className="d-btn-sec oc-tappable"
             disabled={pending}
@@ -955,6 +1021,7 @@ function DetailActions({
         />
         {err ? <p className="d-err">{err}</p> : null}
         <div className="d-actions-row">
+          {discardButton}
           <button
             className="d-btn-pri oc-tappable"
             disabled={pending || !comment.trim()}
@@ -963,6 +1030,17 @@ function DetailActions({
             {pending ? t.detail.answerSending : t.detail.answerSend}
           </button>
         </div>
+      </div>
+    );
+  }
+
+  // An open card has nothing to validate or release: discarding is the one
+  // write it offers, for a card whose reason to exist went away.
+  if (card.status === "aberto") {
+    return (
+      <div className="d-actions">
+        {err ? <p className="d-err">{err}</p> : null}
+        <div className="d-actions-row">{discardButton}</div>
       </div>
     );
   }
@@ -1019,6 +1097,7 @@ function DetailActions({
     <div className="d-actions">
       {err ? <p className="d-err">{err}</p> : null}
       <div className="d-actions-row">
+        {discardButton}
         {!allTicked ? (
           <button
             className="d-btn-ghost oc-tappable"

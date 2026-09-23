@@ -34,6 +34,8 @@ export {
   type MemoryClaimStore,
 } from "./state/claim.js";
 
+export { discardRefusal, type DiscardCheck } from "./state/discard.js";
+
 export {
   ACTIVITY_HARNESS,
   CARDAPIO_TASK_TYPES,

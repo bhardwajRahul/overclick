@@ -279,6 +279,11 @@ const en = {
     releaseClaim: "Release claim",
     releasingClaim: "Releasing…",
     releaseClaimTitle: "Returns the card to Open and preserves this attempt.",
+    discard: "Discard",
+    discardTitle: "Takes the card off the queue for good, with the reason on its history. Attempts and usage are kept.",
+    discardPlaceholder: "Why is this card being discarded? The reason stays on its history.",
+    discardConfirm: "Discard card",
+    discarding: "Discarding…",
     claimExpired: "claim expired",
     transcript: "Transcript",
     transcriptNote:
@@ -849,6 +854,11 @@ const ptBR: Dict = {
     releaseClaim: "Soltar claim",
     releasingClaim: "Soltando…",
     releaseClaimTitle: "Devolve o card para Aberto e preserva este attempt.",
+    discard: "Descartar",
+    discardTitle: "Tira o card da fila de vez, com o motivo no histórico. Attempts e usage ficam guardados.",
+    discardPlaceholder: "Por que este card está sendo descartado? O motivo fica no histórico.",
+    discardConfirm: "Descartar card",
+    discarding: "Descartando…",
     claimExpired: "claim expirado",
     transcript: "Transcript",
     transcriptNote:

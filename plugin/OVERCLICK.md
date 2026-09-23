@@ -36,7 +36,10 @@ Never silently replace a requested execution mechanism. If the card cannot be
 finished, call `task_release` with the real reason. For a dead executor or an
 exhausted model context, create a continuation with `supersedes` and
 `inherit: true`; this closes the old attempt while retaining its measured cost.
-Use `task_heartbeat` during long runs.
+Use `task_heartbeat` during long runs. A card whose reason to exist went away is
+discarded with `task_update {status: "descartado", comment: <reason>}` (manage
+token); if another executor still holds a live claim on it, the refusal says to
+release that claim first.
 
 ## Mission orchestration telemetry
 
