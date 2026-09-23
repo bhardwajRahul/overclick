@@ -806,6 +806,54 @@ describe("task_create canonical flow", () => {
   });
 });
 
+describe("task_deliver evidence shapes (OCL-212)", () => {
+  const deliver = (evidence: unknown) =>
+    TaskDeliverInputSchema.safeParse({ task_id: "OC-1", summary: "pronto", evidence });
+
+  it("keeps a single string as one text item", () => {
+    const parsed = deliver("vitest: 12 passed");
+    expect(parsed.success && parsed.data.evidence).toEqual([{ text: "vitest: 12 passed" }]);
+  });
+
+  it("keeps a list of strings as text items", () => {
+    const parsed = deliver(["tsc exit 0", "vitest exit 0"]);
+    expect(parsed.success && parsed.data.evidence).toEqual([
+      { text: "tsc exit 0" },
+      { text: "vitest exit 0" },
+    ]);
+  });
+
+  it("folds objects without text or url into text", () => {
+    const parsed = deliver([{ step: "abrir o card", result: "ok" }]);
+    expect(parsed.success && parsed.data.evidence).toEqual([
+      { text: "step: abrir o card · result: ok" },
+    ]);
+  });
+
+  it("moves a url that is not a URL into the text", () => {
+    const parsed = deliver([
+      { text: "teste novo", url: "packages/mcp-core/tests/schemas.test.ts:780" },
+      { url: "https://example.com/pr/12" },
+    ]);
+    expect(parsed.success && parsed.data.evidence).toEqual([
+      { text: "teste novo · packages/mcp-core/tests/schemas.test.ts:780" },
+      { url: "https://example.com/pr/12" },
+    ]);
+  });
+
+  it("still refuses an item with nothing to keep, and says the shape", () => {
+    const parsed = deliver([{}]);
+    expect(parsed.success).toBe(false);
+    expect(parsed.error?.issues[0]?.message).toMatch(/plain string/);
+    expect(deliver([""]).success).toBe(false);
+  });
+
+  it("defaults to an empty list", () => {
+    const parsed = deliver(undefined);
+    expect(parsed.success && parsed.data.evidence).toEqual([]);
+  });
+});
+
 describe("task_deliver usage and artifacts", () => {
   it("accepts a handoff without usage (telemetry incomplete)", () => {
     const parsed = TaskDeliverInputSchema.parse({

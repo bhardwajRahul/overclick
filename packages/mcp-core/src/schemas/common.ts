@@ -361,6 +361,67 @@ export const EvidenceSchema = z
     message: "evidência precisa de text ou url",
   });
 
+const isUrl = (value: string) => z.string().url().safeParse(value).success;
+
+/**
+ * One evidence item as an agent writes it, turned into `{text?, url?}`.
+ * OCL-212: 21 of the 23 deliveries that had to be written twice were refused
+ * only for the shape of `evidence` (a string, a list of strings, `{step,
+ * result}` objects, a path in `url`), and each retry rewrote the whole
+ * summary. The words are the same evidence in any of those shapes, so they
+ * are kept instead of refused.
+ */
+function normalizeEvidenceItem(item: unknown): unknown {
+  if (typeof item === "string") return item.trim() ? { text: item } : item;
+  if (!item || typeof item !== "object" || Array.isArray(item)) return item;
+  const { text, url, ...rest } = item as Record<string, unknown>;
+  const parts: string[] = [];
+  if (typeof text === "string" && text.trim()) parts.push(text);
+  if (!parts.length) {
+    for (const [key, value] of Object.entries(rest)) {
+      if (typeof value === "string" || typeof value === "number") {
+        parts.push(`${key}: ${value}`);
+      }
+    }
+  }
+  let keptUrl: string | undefined;
+  if (typeof url === "string" && url.trim()) {
+    if (isUrl(url)) keptUrl = url;
+    else parts.push(url);
+  }
+  const out: { text?: string; url?: string } = {};
+  if (parts.length) out.text = parts.join(" · ");
+  if (keptUrl) out.url = keptUrl;
+  return out;
+}
+
+/**
+ * `task_deliver.evidence` as input: a list of `{text}` / `{url}` items, a list
+ * of plain strings, or one string. Stored as `EvidenceSchema` items.
+ */
+export const EvidenceInputSchema = z.preprocess(
+  (value) => {
+    if (typeof value === "string") return value.trim() ? [value] : [];
+    return value;
+  },
+  z.array(
+    z.preprocess(
+      normalizeEvidenceItem,
+      z
+        .object({
+          text: z.string().min(1).optional(),
+          url: z.string().url().optional(),
+        })
+        .refine((value) => Boolean(value.text || value.url), {
+          message:
+            'each evidence item needs text or url: send a plain string, {"text": "..."} or {"url": "https://..."}',
+        }),
+    ),
+  ),
+).describe(
+  'List of evidence items, each {"text": "..."} or {"url": "https://..."}. Plain strings are accepted and stored as text.',
+);
+
 export const ArtifactSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("rfc_markdown"),
