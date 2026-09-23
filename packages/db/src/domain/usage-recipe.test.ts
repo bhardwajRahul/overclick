@@ -124,6 +124,30 @@ describe("usage collection recipes", () => {
     });
   });
 
+  it("counts one Claude Code response once, however many lines it was written as", () => {
+    // Claude Code writes one line per content block (thinking, text,
+    // tool_use), and every line repeats the response's usage under the same
+    // message.id. Summing lines billed a three-block answer three times.
+    const claude = findUsageRecipe(recipes, "claude-code");
+    const transcript = fileURLToPath(
+      new URL("./fixtures/claude-transcript-split.jsonl", import.meta.url),
+    );
+
+    const output = JSON.parse(
+      execFileSync("bash", ["-c", claude!.command], {
+        env: { ...process.env, TRANSCRIPT_PATH: transcript },
+        encoding: "utf8",
+      }),
+    );
+    expect(output).toMatchObject({ turns: 3, estimated: false });
+    expect(output.segments).toEqual(
+      expect.arrayContaining([
+        { model: "claude-opus-5", input: 130, output: 50, cache_read: 260, cache_write: 8 },
+        { model: "claude-haiku-4-5", input: 20, output: 7, cache_read: 40, cache_write: 1 },
+      ]),
+    );
+  });
+
   it("finds the newest transcript under the slugged project folder on its own", () => {
     const claude = findUsageRecipe(recipes, "claude-code");
     const home = mkdtempSync(join(tmpdir(), "ocl-home-"));
