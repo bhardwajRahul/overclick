@@ -49,7 +49,20 @@ failOpen(async () => {
   if (CLAIM.test(toolName)) {
     const claimedAt = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
     const marker = claimMarker(hookInput, claimedAt);
-    if (marker) writeClaimMarker(cwd, marker);
+    if (!marker) return;
+    writeClaimMarker(cwd, marker);
+    // OCL-211: with the marker in place, usage-fill.mjs measures this card
+    // from the session transcript at task_deliver, so the agent need not
+    // retype the recipe's numbers. It reads Claude Code transcripts only, so
+    // only Claude Code, which sets CLAUDE_PROJECT_DIR for its hooks, is told.
+    if (!process.env.CLAUDE_PROJECT_DIR && !process.env.CLAUDECODE) return;
+    process.stdout.write(`${JSON.stringify({
+      hookSpecificOutput: {
+        hookEventName: "PostToolUse",
+        additionalContext:
+          `OverClick: at task_deliver ${marker.task_id}, omit usage — this plugin measures it from this session's transcript. Send usage yourself only to override.`,
+      },
+    })}\n`);
     return;
   }
 

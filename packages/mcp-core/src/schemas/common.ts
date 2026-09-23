@@ -354,7 +354,11 @@ export const WriteAckSchema = z.object({
   /** Non-task writes identify their resource with its uuid or policy key. */
   id: z.string().min(1).optional(),
   updated_at: IsoDateTimeSchema,
-  /** Only values changed or produced by the mutation; never the full object. */
+  /**
+   * Only values changed or produced by the mutation; never the full object.
+   * Caller-authored text (comment, progress, context, objective, title, name)
+   * is marked `true` instead of echoed: the caller already holds it.
+   */
   changed: z.record(z.unknown()),
 });
 

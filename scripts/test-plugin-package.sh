@@ -65,7 +65,12 @@ jq -e '(.skills | index("./plugin/skills/overclick")) and .commands == "./plugin
   "$REPO_ROOT/.kimi-plugin/plugin.json" >/dev/null
 jq -e '.hooks | keys | sort == ["PostToolUse", "PreToolUse", "SessionStart", "Stop"]' \
   "$REPO_ROOT/plugin/hooks/hooks.json" >/dev/null
-jq -e '(.hooks.PostToolUse | length == 2) and (.hooks.PreToolUse | length == 1)' \
+jq -e '(.hooks.PostToolUse | length == 2) and (.hooks.PreToolUse | length == 2)' \
+  "$REPO_ROOT/plugin/hooks/hooks.json" >/dev/null
+# OCL-211. Usage by reference: before task_deliver leaves, the plugin measures
+# the session transcript and fills usage the agent left out.
+jq -e '.hooks.PreToolUse | map(select(.matcher == "task_deliver|mcp__.*__task_deliver"
+  and (.hooks[].command | contains("usage-fill.mjs")))) | length == 1' \
   "$REPO_ROOT/plugin/hooks/hooks.json" >/dev/null
 # OCL-134. A name list (Edit|Write|Bash) cannot fail closed: the hole it left on
 # Windows was PowerShell, and the next hole is whatever the next harness calls

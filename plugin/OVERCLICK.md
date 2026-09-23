@@ -31,9 +31,11 @@ bugs, features, refactors, and deployments.
    `branch_register` before editing when the work lives in Git.
 6. Commit and push the branch before `task_deliver`. Cite the full commit ID in
    delivery evidence so the remote-check hook can confirm it.
-7. Run the usage recipe from the claim briefing and send the measured usage in
-   `task_deliver`, together with a truthful summary, evidence, branch, and the
-   first verification command or location.
+7. Call `task_deliver` with a truthful summary, evidence, branch, the first
+   verification command or location, and the measured usage. With this plugin
+   on Claude Code, omit `usage`: its `task_deliver` hook measures this session's
+   transcript from the claim and fills it in. Elsewhere, run the usage recipe
+   from the claim briefing and send what it prints. Usage you send always wins.
 8. Stop at `feito`. Only a human marks the work `validado`.
 
 Never silently replace a requested execution mechanism. If the card cannot be

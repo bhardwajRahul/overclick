@@ -66,6 +66,7 @@ import {
   canonicalTranscriptModel,
   identityFromTranscript,
 } from "./transcript-model";
+import { usageFromTranscript } from "./transcript-usage";
 import {
   and,
   asc,
@@ -366,6 +367,14 @@ function mapExecutionAttempt(row: typeof executionAttempt.$inferSelect) {
 }
 
 type ChangedFields = Record<string, unknown>;
+
+/**
+ * Marks a caller-authored text field as written without echoing it (OCL-210).
+ * The caller already holds what it sent, so repeating a 2,000-character
+ * comment or a whole mission context doubled the cost of every write; the
+ * read tools return the stored text for whoever needs it again.
+ */
+const WRITTEN = true;
 
 /** Compact acknowledgement for a task mutation. */
 function taskWriteAck(
@@ -974,8 +983,8 @@ async function organizationUpdate(
   }
 
   const changed: ChangedFields = {};
-  if (current.name !== row.name) changed.name = row.name;
-  if (current.context !== row.context) changed.context = row.context;
+  if (current.name !== row.name) changed.name = WRITTEN;
+  if (current.context !== row.context) changed.context = WRITTEN;
   return rowWriteAck(row.id, row.updatedAt, changed);
 }
 
@@ -1527,13 +1536,13 @@ async function projectUpdate(
     }
 
     const changed: ChangedFields = {};
-    if (proj.name !== row.name) changed.name = row.name;
+    if (proj.name !== row.name) changed.name = WRITTEN;
     if (proj.organizationId !== row.organizationId) {
       changed.organization_id = row.organizationId;
       changed.organization_name = org.name;
     }
     if (proj.repoUrl !== row.repoUrl) changed.repo_url = row.repoUrl;
-    if (proj.context !== row.context) changed.context = row.context;
+    if (proj.context !== row.context) changed.context = WRITTEN;
     if (proj.currentVersion !== row.currentVersion) {
       changed.current_version = row.currentVersion;
     }
@@ -1907,13 +1916,13 @@ async function missionUpdate(
     }
 
   const changed: ChangedFields = {};
-  if (current.title !== row.title) changed.title = row.title;
+  if (current.title !== row.title) changed.title = WRITTEN;
   if (current.organizationId !== row.organizationId) {
     changed.organization_id = row.organizationId;
     changed.organization_name = org.name;
   }
-  if (current.objective !== row.objective) changed.objective = row.objective;
-  if (current.context !== row.context) changed.context = row.context;
+  if (current.objective !== row.objective) changed.objective = WRITTEN;
+  if (current.context !== row.context) changed.context = WRITTEN;
   if (current.status !== row.status) changed.status = row.status;
   return rowWriteAck(row.id, row.updatedAt, changed, row.status);
   });
@@ -3777,7 +3786,7 @@ async function taskReopen(
       body: input.reason,
     });
     return taskWriteAck(updated, {
-      status: "aberto", revisado: false, reopen_comment: input.reason, report_recorded: true,
+      status: "aberto", revisado: false, reopen_comment: WRITTEN, report_recorded: true,
     });
   });
 }
@@ -3843,7 +3852,7 @@ async function taskUpdate(
     const updated = validated.value;
     if (input.return !== "full") {
       return taskWriteAck(updated, {
-        status: "validado", revisado: true, comment: input.comment!.trim(),
+        status: "validado", revisado: true, comment: WRITTEN,
       });
     }
     const latestUsageGuard = await latestUsageGuardForTask(db, updated.id);
@@ -4183,9 +4192,9 @@ async function taskUpdate(
   if (found.row.status !== nextRow.status) {
     changed.status = nextRow.status;
   }
-  if (input.comment !== undefined) changed.comment = input.comment;
-  if (input.progress !== undefined) changed.progress = input.progress;
-  if (input.spawn_failure !== undefined) changed.spawn_failure = input.spawn_failure;
+  if (input.comment !== undefined) changed.comment = WRITTEN;
+  if (input.progress !== undefined) changed.progress = WRITTEN;
+  if (input.spawn_failure !== undefined) changed.spawn_failure = WRITTEN;
   if (usageRecorded) changed.usage_recorded = true;
   if (subtasksMoved !== null) changed.subtasks_moved = subtasksMoved;
   if (projectMove) changed.project_move = projectMove;
@@ -4490,17 +4499,6 @@ async function taskDeliver(
       .orderBy(desc(executionAttempt.startedAt))
       .limit(1);
 
-    // Usage as the board stores it: segments per model, with the flat
-    // counters derived from them. A flat-only block still arrives here as one
-    // segment for the model the attempt was claimed with.
-    const usage: UsageReport | undefined = input.usage
-      ? resolveUsageSegments(input.usage, openAttempt?.model ?? null)
-      : undefined;
-    const incomplete = isTelemetryIncomplete(usage);
-    // A flag that only says something is missing leaves the agent guessing
-    // which field to send; the reason names them.
-    const incompleteReason = telemetryIncompleteReason(usage);
-
     // The delivery usually knows the path the claim could not: the recipe
     // only prints it once the run is done. Fields it omits keep the claimed
     // value, and an attempt claimed before this column existed falls back to
@@ -4537,6 +4535,48 @@ async function taskDeliver(
           }
         : null,
     );
+
+    const finishedAt = new Date();
+    const serverDurationMs = openAttempt
+      ? Math.max(0, finishedAt.getTime() - openAttempt.startedAt.getTime())
+      : 0;
+    // Usage by reference (OCL-211): a delivery that names its transcript and
+    // sends no numbers gets them from the board, which runs the shipped recipe
+    // on that file from the claim boundary. Numbers the agent sent always win.
+    // A path this machine cannot read (the agent's disk, seen from a board in
+    // the cloud) measures nothing, and the delivery goes on as one without
+    // usage.
+    const boardMeasured = input.usage
+      ? null
+      : await usageFromTranscript({
+          cli: transcript?.cli ?? claimExecutor.cli ?? found.row.claimedByExecutor ?? null,
+          path: transcript?.path,
+          claimedAt: openAttempt?.startedAt,
+        });
+    // Usage as the board stores it: segments per model, with the flat
+    // counters derived from them. A flat-only block still arrives here as one
+    // segment for the model the attempt was claimed with.
+    const usage: UsageReport | undefined = input.usage
+      ? resolveUsageSegments(input.usage, openAttempt?.model ?? null)
+      : boardMeasured
+        ? resolveUsageSegments(
+            {
+              segments: boardMeasured.segments,
+              turns: boardMeasured.turns,
+              duration_ms: serverDurationMs,
+              estimated: false,
+            },
+            openAttempt?.model ?? null,
+          )
+        : undefined;
+    const incomplete = isTelemetryIncomplete(usage);
+    // A flag that only says something is missing leaves the agent guessing
+    // which field to send; the reason names them.
+    const incompleteReason =
+      !usage && transcript?.path
+        ? `no usage was sent and the board cannot read ${transcript.path} from where it runs — run the usage recipe and send usage with task_update`
+        : telemetryIncompleteReason(usage);
+
     // The file the card points at is the proof of which model ran. When it
     // is reachable and names one, that name wins over the claim and over
     // whatever the agent typed into usage.segments. Unreadable path → keep
@@ -4555,10 +4595,6 @@ async function taskDeliver(
           }
         : usage;
 
-    const finishedAt = new Date();
-    const serverDurationMs = openAttempt
-      ? Math.max(0, finishedAt.getTime() - openAttempt.startedAt.getTime())
-      : 0;
     const sessionId =
       transcript?.sessionId ?? openAttempt?.sessionId ?? claimExecutor.session_id ?? null;
     const usageGuard =
@@ -4594,7 +4630,7 @@ async function taskDeliver(
       : null;
     const modelChanged = Boolean(measured && measured.model !== claimedModel);
     const newModelSource: AttemptModelSource | undefined = modelChanged
-      ? fromTranscript
+      ? fromTranscript || boardMeasured
         ? "measured"
         : "declared"
       : undefined;
@@ -4727,7 +4763,7 @@ async function taskDeliver(
         delivery_verification: persisted.value.saved.deliveryVerification ?? null,
         delivery_warning: persisted.value.saved.deliveryWarning ?? null,
         telemetry_incomplete: persisted.value.incomplete,
-        ...(input.usage ? { usage_recorded: true } : {}),
+        ...(persisted.value.usage ? { usage_recorded: true } : {}),
       }),
       ...(persisted.value.incompleteReason
         ? { telemetry_incomplete_reason: persisted.value.incompleteReason }
