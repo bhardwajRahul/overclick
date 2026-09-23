@@ -132,6 +132,68 @@ describe("MCP tool edge cases against a test db", () => {
     expect(TaskUpdateOutputSchema.parse(full.value).task.short_id).toBe(ack.short_id);
   });
 
+  it("confirms a write by field name instead of echoing the text it received (OCL-210)", async () => {
+    world = await createTestWorld();
+    const longText = `eco ${"x".repeat(2000)}`;
+    const created = await invokeMcpTool(world.db, ctx(), "task_create", {
+      mission: world.missionId,
+      project_id: world.projectId,
+      title: "Sem eco",
+      type: "bug",
+      o_que: longText,
+      por_que: "Escrever não pode custar o dobro.",
+      como_confirmo: [{ step: "mede a resposta", expected: "sem o texto" }],
+      origem,
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    expect(JSON.stringify(created.value)).not.toContain(longText);
+    const ack = TaskCreateAckOutputSchema.parse(created.value);
+    if ("task" in ack) throw new Error("expected the compact task_create acknowledgement");
+    expect(ack.short_id).toBe("OC-1");
+
+    const updated = await invokeMcpTool(world.db, ctx(), "task_update", {
+      task_id: ack.short_id,
+      comment: longText,
+      progress: longText,
+    });
+    expect(updated.ok).toBe(true);
+    if (!updated.ok) return;
+    expect(JSON.stringify(updated.value)).not.toContain(longText);
+    const updateAck = TaskUpdateAckOutputSchema.parse(updated.value);
+    if ("task" in updateAck) throw new Error("expected the compact task_update acknowledgement");
+    expect(updateAck.changed).toEqual({ comment: true, progress: true });
+    expect(updateAck).toMatchObject({ short_id: ack.short_id, status: "aberto" });
+    expect(updateAck.updated_at).toBeTruthy();
+
+    const mission = await invokeMcpTool(world.db, ctx(), "mission_update", {
+      mission_id: world.missionId,
+      objective: longText,
+      context: longText,
+    });
+    expect(mission.ok).toBe(true);
+    if (!mission.ok) return;
+    expect(JSON.stringify(mission.value)).not.toContain(longText);
+    expect(mission.value).toMatchObject({
+      changed: { objective: true, context: true },
+    });
+
+    const read = await invokeMcpTool(world.db, ctx(), "task_get", {
+      task_id: ack.short_id,
+      include: ["comments"],
+    });
+    expect(read.ok).toBe(true);
+    if (!read.ok) return;
+    expect(JSON.stringify(read.value)).toContain(longText);
+    const missionRead = await invokeMcpTool(world.db, ctx(), "mission_get", {
+      mission_id: world.missionId,
+      view: "full",
+    });
+    expect(missionRead.ok).toBe(true);
+    if (!missionRead.ok) return;
+    expect(JSON.stringify(missionRead.value)).toContain(longText);
+  });
+
   it("creates a team card with scoped subtasks and recommended harness", async () => {
     world = await createTestWorld();
     const created = await invokeTool(world.db, ctx(), "task_create", {

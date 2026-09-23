@@ -364,6 +364,14 @@ function mapExecutionAttempt(row: typeof executionAttempt.$inferSelect) {
 
 type ChangedFields = Record<string, unknown>;
 
+/**
+ * Marks a caller-authored text field as written without echoing it (OCL-210).
+ * The caller already holds what it sent, so repeating a 2,000-character
+ * comment or a whole mission context doubled the cost of every write; the
+ * read tools return the stored text for whoever needs it again.
+ */
+const WRITTEN = true;
+
 /** Compact acknowledgement for a task mutation. */
 function taskWriteAck(
   row: TaskRow,
@@ -971,8 +979,8 @@ async function organizationUpdate(
   }
 
   const changed: ChangedFields = {};
-  if (current.name !== row.name) changed.name = row.name;
-  if (current.context !== row.context) changed.context = row.context;
+  if (current.name !== row.name) changed.name = WRITTEN;
+  if (current.context !== row.context) changed.context = WRITTEN;
   return rowWriteAck(row.id, row.updatedAt, changed);
 }
 
@@ -1507,13 +1515,13 @@ async function projectUpdate(
     }
 
     const changed: ChangedFields = {};
-    if (proj.name !== row.name) changed.name = row.name;
+    if (proj.name !== row.name) changed.name = WRITTEN;
     if (proj.organizationId !== row.organizationId) {
       changed.organization_id = row.organizationId;
       changed.organization_name = org.name;
     }
     if (proj.repoUrl !== row.repoUrl) changed.repo_url = row.repoUrl;
-    if (proj.context !== row.context) changed.context = row.context;
+    if (proj.context !== row.context) changed.context = WRITTEN;
     if (proj.currentVersion !== row.currentVersion) {
       changed.current_version = row.currentVersion;
     }
@@ -1887,13 +1895,13 @@ async function missionUpdate(
     }
 
   const changed: ChangedFields = {};
-  if (current.title !== row.title) changed.title = row.title;
+  if (current.title !== row.title) changed.title = WRITTEN;
   if (current.organizationId !== row.organizationId) {
     changed.organization_id = row.organizationId;
     changed.organization_name = org.name;
   }
-  if (current.objective !== row.objective) changed.objective = row.objective;
-  if (current.context !== row.context) changed.context = row.context;
+  if (current.objective !== row.objective) changed.objective = WRITTEN;
+  if (current.context !== row.context) changed.context = WRITTEN;
   if (current.status !== row.status) changed.status = row.status;
   return rowWriteAck(row.id, row.updatedAt, changed, row.status);
   });
@@ -4068,9 +4076,9 @@ async function taskUpdate(
   if (found.row.status !== nextRow.status) {
     changed.status = nextRow.status;
   }
-  if (input.comment !== undefined) changed.comment = input.comment;
-  if (input.progress !== undefined) changed.progress = input.progress;
-  if (input.spawn_failure !== undefined) changed.spawn_failure = input.spawn_failure;
+  if (input.comment !== undefined) changed.comment = WRITTEN;
+  if (input.progress !== undefined) changed.progress = WRITTEN;
+  if (input.spawn_failure !== undefined) changed.spawn_failure = WRITTEN;
   if (usageRecorded) changed.usage_recorded = true;
   if (subtasksMoved !== null) changed.subtasks_moved = subtasksMoved;
   if (projectMove) changed.project_move = projectMove;
