@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, realpathSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -532,5 +532,71 @@ describe("usage collection recipes", () => {
         : r,
     );
     expect(findUsageRecipe(custom, "codex")?.command).toBe("my-own-command");
+  });
+});
+
+/**
+ * OCL-211: the plugin's PreToolUse hook fills task_deliver usage from the
+ * session transcript on the agent's machine. It has to count exactly what the
+ * shipped Claude Code recipe counts, or the card would carry two truths.
+ */
+describe("the plugin hook that fills task_deliver usage", () => {
+  const hook = fileURLToPath(new URL("../../../../plugin/hooks/usage-fill.mjs", import.meta.url));
+  const transcript = fileURLToPath(
+    new URL("./fixtures/claude-transcript-split.jsonl", import.meta.url),
+  );
+  const claimedAt = "2026-08-18T10:00:00.000Z";
+
+  function runHook(toolInput: Record<string, unknown>, marker: Record<string, unknown> | null) {
+    const cwd = mkdtempSync(join(tmpdir(), "ocl-211-hook-"));
+    if (marker) {
+      mkdirSync(join(cwd, ".overclick"));
+      writeFileSync(join(cwd, ".overclick", "claim.json"), JSON.stringify(marker));
+    }
+    const stdout = execFileSync(process.execPath, [hook], {
+      input: JSON.stringify({
+        tool_name: "mcp__overclick__task_deliver",
+        tool_input: toolInput,
+        cwd,
+        session_id: "hook-session",
+        transcript_path: transcript,
+      }),
+      encoding: "utf8",
+    });
+    return stdout.trim() ? JSON.parse(stdout) : null;
+  }
+
+  const marker = { task_id: "OCL-1", claimed_at: claimedAt, session_id: "hook-session" };
+
+  it("fills usage with the same numbers the shipped recipe prints", () => {
+    const claude = findUsageRecipe(factoryUsageRecipes(), "claude-code");
+    const recipe = JSON.parse(
+      execFileSync("bash", ["-c", bindRecipeSettings(claude!.command, { transcript, claimed_at: claimedAt })], {
+        encoding: "utf8",
+      }),
+    );
+
+    const output = runHook({ task_id: "OCL-1", summary: "done", commit: "abc" }, marker);
+    expect(output.hookSpecificOutput).toMatchObject({ hookEventName: "PreToolUse", permissionDecision: "allow" });
+    const updated = output.hookSpecificOutput.updatedInput;
+    expect(updated).toMatchObject({ task_id: "OCL-1", summary: "done", commit: "abc" });
+    expect(updated.usage.segments).toEqual(recipe.segments);
+    expect(updated.usage.turns).toBe(recipe.turns);
+    expect(updated.usage.estimated).toBe(false);
+    expect(typeof updated.usage.duration_ms).toBe("number");
+    expect(updated.transcript.path).toBe(transcript);
+  });
+
+  it("leaves a delivery that already carries usage untouched", () => {
+    const usage = { segments: [{ model: "x", input: 1, output: 1 }], turns: 1 };
+    expect(runHook({ task_id: "OCL-1", summary: "done", usage }, marker)).toBeNull();
+  });
+
+  it("measures nothing for a card this directory did not claim", () => {
+    expect(runHook({ task_id: "OCL-2", summary: "done" }, marker)).toBeNull();
+    expect(runHook({ task_id: "OCL-1", summary: "done" }, null)).toBeNull();
+    expect(
+      runHook({ task_id: "OCL-1", summary: "done" }, { ...marker, session_id: "another-session" }),
+    ).toBeNull();
   });
 });

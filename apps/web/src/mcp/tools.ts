@@ -65,6 +65,7 @@ import {
   canonicalTranscriptModel,
   identityFromTranscript,
 } from "./transcript-model";
+import { usageFromTranscript } from "./transcript-usage";
 import {
   and,
   asc,
@@ -4383,17 +4384,6 @@ async function taskDeliver(
       .orderBy(desc(executionAttempt.startedAt))
       .limit(1);
 
-    // Usage as the board stores it: segments per model, with the flat
-    // counters derived from them. A flat-only block still arrives here as one
-    // segment for the model the attempt was claimed with.
-    const usage: UsageReport | undefined = input.usage
-      ? resolveUsageSegments(input.usage, openAttempt?.model ?? null)
-      : undefined;
-    const incomplete = isTelemetryIncomplete(usage);
-    // A flag that only says something is missing leaves the agent guessing
-    // which field to send; the reason names them.
-    const incompleteReason = telemetryIncompleteReason(usage);
-
     // The delivery usually knows the path the claim could not: the recipe
     // only prints it once the run is done. Fields it omits keep the claimed
     // value, and an attempt claimed before this column existed falls back to
@@ -4430,6 +4420,48 @@ async function taskDeliver(
           }
         : null,
     );
+
+    const finishedAt = new Date();
+    const serverDurationMs = openAttempt
+      ? Math.max(0, finishedAt.getTime() - openAttempt.startedAt.getTime())
+      : 0;
+    // Usage by reference (OCL-211): a delivery that names its transcript and
+    // sends no numbers gets them from the board, which runs the shipped recipe
+    // on that file from the claim boundary. Numbers the agent sent always win.
+    // A path this machine cannot read (the agent's disk, seen from a board in
+    // the cloud) measures nothing, and the delivery goes on as one without
+    // usage.
+    const boardMeasured = input.usage
+      ? null
+      : await usageFromTranscript({
+          cli: transcript?.cli ?? claimExecutor.cli ?? found.row.claimedByExecutor ?? null,
+          path: transcript?.path,
+          claimedAt: openAttempt?.startedAt,
+        });
+    // Usage as the board stores it: segments per model, with the flat
+    // counters derived from them. A flat-only block still arrives here as one
+    // segment for the model the attempt was claimed with.
+    const usage: UsageReport | undefined = input.usage
+      ? resolveUsageSegments(input.usage, openAttempt?.model ?? null)
+      : boardMeasured
+        ? resolveUsageSegments(
+            {
+              segments: boardMeasured.segments,
+              turns: boardMeasured.turns,
+              duration_ms: serverDurationMs,
+              estimated: false,
+            },
+            openAttempt?.model ?? null,
+          )
+        : undefined;
+    const incomplete = isTelemetryIncomplete(usage);
+    // A flag that only says something is missing leaves the agent guessing
+    // which field to send; the reason names them.
+    const incompleteReason =
+      !usage && transcript?.path
+        ? `no usage was sent and the board cannot read ${transcript.path} from where it runs — run the usage recipe and send usage with task_update`
+        : telemetryIncompleteReason(usage);
+
     // The file the card points at is the proof of which model ran. When it
     // is reachable and names one, that name wins over the claim and over
     // whatever the agent typed into usage.segments. Unreadable path → keep
@@ -4448,10 +4480,6 @@ async function taskDeliver(
           }
         : usage;
 
-    const finishedAt = new Date();
-    const serverDurationMs = openAttempt
-      ? Math.max(0, finishedAt.getTime() - openAttempt.startedAt.getTime())
-      : 0;
     const sessionId =
       transcript?.sessionId ?? openAttempt?.sessionId ?? claimExecutor.session_id ?? null;
     const usageGuard =
@@ -4487,7 +4515,7 @@ async function taskDeliver(
       : null;
     const modelChanged = Boolean(measured && measured.model !== claimedModel);
     const newModelSource: AttemptModelSource | undefined = modelChanged
-      ? fromTranscript
+      ? fromTranscript || boardMeasured
         ? "measured"
         : "declared"
       : undefined;
@@ -4620,7 +4648,7 @@ async function taskDeliver(
         delivery_verification: persisted.value.saved.deliveryVerification ?? null,
         delivery_warning: persisted.value.saved.deliveryWarning ?? null,
         telemetry_incomplete: persisted.value.incomplete,
-        ...(input.usage ? { usage_recorded: true } : {}),
+        ...(persisted.value.usage ? { usage_recorded: true } : {}),
       }),
       ...(persisted.value.incompleteReason
         ? { telemetry_incomplete_reason: persisted.value.incompleteReason }
