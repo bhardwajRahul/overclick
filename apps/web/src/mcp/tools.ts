@@ -34,6 +34,7 @@ import {
   applyContextOps,
   applyTransition,
   branchConvention,
+  confirmationSteps,
   discardRefusal,
   err,
   evaluateClaim,
@@ -52,6 +53,7 @@ import {
   type McpToolName,
   type OrganizationCounts,
   type ProjectMove,
+  type ProjectResolution,
   type ReadOptions,
   type Result,
   type Reviewer,
@@ -65,6 +67,7 @@ import {
   canonicalTranscriptModel,
   identityFromTranscript,
 } from "./transcript-model";
+import { usageFromTranscript } from "./transcript-usage";
 import {
   and,
   asc,
@@ -114,6 +117,7 @@ import {
   unregisteredClaimModelRefusal,
   type AttemptModelSource,
 } from "./executor-identity";
+import { resolveProjectByRepo } from "./project-resolution";
 import {
   decodeExecutor,
   emptyCardCounts,
@@ -127,6 +131,7 @@ import {
   mapOrganizationDetail,
   mapProject,
   mapProjectDetail,
+  mapProjectSummary,
   mapTask,
   mapTaskForRead,
   originToDb,
@@ -1082,7 +1087,7 @@ const PROJECT_HINT =
 async function projectList(
   db: McpDatabase,
   ctx: AuthContext,
-  input: { organization?: string },
+  input: { organization?: string; view?: "summary" | "full" },
 ) {
   const filters = [eq(project.workspaceId, ctx.workspaceId)];
   if (input.organization) {
@@ -1091,6 +1096,23 @@ async function projectList(
       return organizationNotFound(db, ctx.workspaceId, input.organization);
     }
     filters.push(eq(project.organizationId, org.id));
+  }
+
+  // The default answers "which project is it" (OCL-208): measured on a real
+  // board, the full rows came to 24,202 characters for 61 projects and the
+  // three fields that pick one to 6,214. Counters, organization and uuid are
+  // one view: full away.
+  if (input.view !== "full") {
+    const rows = await db
+      .select({
+        idPrefix: project.idPrefix,
+        name: project.name,
+        repoUrl: project.repoUrl,
+      })
+      .from(project)
+      .where(and(...filters))
+      .orderBy(asc(project.createdAt));
+    return { projects: rows.map(mapProjectSummary) };
   }
 
   const rows = await db
@@ -2948,17 +2970,112 @@ async function taskSearch(
   };
 }
 
+type CardProjectChoice =
+  | { row: ProjectRow; resolution: ProjectResolution; refusal?: undefined }
+  | { row?: undefined; resolution?: undefined; refusal: Result<never> };
+
+/**
+ * The project a new card lands in (OCL-208). A declared project_id always
+ * wins, also when it names a project of another repository: filing a card for
+ * another project from this checkout is routine, so the repo is never checked
+ * against it. Without one, the repo the caller sent is matched against the
+ * projects' repo_url; none or several comes back refused with what was looked
+ * for or with the candidates, never with the whole list.
+ */
+async function resolveCardProject(
+  db: Tx,
+  workspaceId: string,
+  input: { project_id?: string; repo?: string },
+): Promise<CardProjectChoice> {
+  if (input.project_id !== undefined) {
+    const row = await findProject(db, workspaceId, input.project_id);
+    if (!row) {
+      return {
+        refusal: err(
+          "NOT_FOUND",
+          `Project ${input.project_id} not found in this workspace. ${PROJECT_HINT}`,
+        ),
+      };
+    }
+    return { row, resolution: { id_prefix: row.idPrefix, from: "project_id" } };
+  }
+
+  const known = await db
+    .select({
+      id: project.id,
+      idPrefix: project.idPrefix,
+      name: project.name,
+      repoUrl: project.repoUrl,
+    })
+    .from(project)
+    .where(and(eq(project.workspaceId, workspaceId), isNotNull(project.repoUrl)))
+    .orderBy(asc(project.createdAt));
+  const found = resolveProjectByRepo(input.repo ?? "", known);
+
+  if (found.kind === "unreadable") {
+    return {
+      refusal: err(
+        "INVALID_ARGUMENT",
+        "repo is not a git remote, owner/repo, a path or a name. Send what git remote get-url origin prints, or pass project_id (uuid or card prefix).",
+      ),
+    };
+  }
+  if (found.kind === "none") {
+    const how =
+      found.ref === "remote"
+        ? ""
+        : " A path or a name matches a file:// repo_url that holds it, or a repository named after one of its folders; the git remote (git remote get-url origin) matches exactly.";
+    return {
+      refusal: err(
+        "NOT_FOUND",
+        `No project in this workspace has a repo_url matching ${found.sought}.${how} If the card belongs to an existing project, pass its project_id (uuid or card prefix); if this repository has no project yet, create it with project_create passing repo_url, then retry.`,
+      ),
+    };
+  }
+  if (found.kind === "ambiguous") {
+    const options = found.candidates
+      .map((row) => `${row.idPrefix} (${row.name}, ${row.repoUrl})`)
+      .join("; ");
+    return {
+      refusal: err(
+        "INVALID_ARGUMENT",
+        `${found.sought} matches ${found.candidates.length} projects: ${options}. Pass project_id with the card prefix of the right one.`,
+      ),
+    };
+  }
+
+  const row = await findProject(db, workspaceId, found.project.id);
+  if (!row) {
+    return {
+      refusal: err(
+        "NOT_FOUND",
+        `Project ${found.project.idPrefix} was removed while this card was being filed. ${PROJECT_HINT}`,
+      ),
+    };
+  }
+  return {
+    row,
+    resolution: {
+      id_prefix: row.idPrefix,
+      from: "repo",
+      match: found.match,
+      ...(row.repoUrl ? { repo_url: row.repoUrl } : {}),
+    },
+  };
+}
+
 async function taskCreate(
   db: McpDatabase,
   ctx: AuthContext,
   input: {
     mission?: string;
-    project_id: string;
+    project_id?: string;
+    repo?: string;
     title: string;
     type: Task["type"];
     o_que?: string;
     por_que?: string;
-    como_confirmo?: Task["como_confirmo"];
+    como_confirmo?: Task["como_confirmo"] | string;
     supersedes?: string;
     inherit?: boolean;
     priority?: Task["priority"];
@@ -2976,17 +3093,13 @@ async function taskCreate(
     }>;
     devolve_para?: Reviewer;
     harness?: Harness;
-    origem: Task["origem"];
+    origem?: Task["origem"];
     return?: "ack" | "full";
   },
 ) {
-  const proj = await findProject(db, ctx.workspaceId, input.project_id);
-  if (!proj) {
-    return err(
-      "NOT_FOUND",
-      `Project ${input.project_id} not found in this workspace. ${PROJECT_HINT}`,
-    );
-  }
+  const target = await resolveCardProject(db, ctx.workspaceId, input);
+  if (target.refusal) return target.refusal;
+  const proj = target.row;
 
   let missionId: string | null = null;
   if (input.mission) {
@@ -3027,6 +3140,14 @@ async function taskCreate(
       : undefined;
 
   const reviewer = reviewerToColumns(input.devolve_para);
+  // The board fills what it already knows (OCL-213): with no origem, the card
+  // records the token that filed it.
+  const origin = originToDb(input.origem ?? { agent: ctx.tokenLabel });
+  // Text como_confirmo was already checked line by line by the input schema.
+  const sentSteps =
+    input.como_confirmo === undefined
+      ? undefined
+      : (confirmationSteps(input.como_confirmo) ?? undefined);
 
   return db.transaction(async (tx) => {
     const original = input.supersedes
@@ -3048,7 +3169,7 @@ async function taskCreate(
     const oQue = input.o_que ?? (input.inherit ? original?.row.oQue : undefined);
     const porQue = input.por_que ?? (input.inherit ? original?.row.porQue : undefined);
     const comoConfirmo =
-      input.como_confirmo ??
+      sentSteps ??
       (input.inherit && original
         ? parseComoConfirmo(original.row.comoConfirmo)
         : undefined);
@@ -3092,7 +3213,7 @@ async function taskCreate(
         status: "aberto",
         priority: input.priority ?? "media",
         ...reviewer,
-        origin: originToDb(input.origem),
+        origin,
         mode: input.mode,
       })
       .returning();
@@ -3129,7 +3250,7 @@ async function taskCreate(
           status: "aberto",
           priority: input.priority ?? "media",
           ...reviewerToColumns(item.devolve_para ?? input.devolve_para),
-          origin: originToDb(input.origem),
+          origin,
           mode: "solo",
         })
         .returning();
@@ -3141,6 +3262,7 @@ async function taskCreate(
       return {
         task: mapTask(created, proj),
         subtasks: children.map((child) => mapTask(child, proj)),
+        project: target.resolution,
         ...(warnings ? { warnings } : {}),
       };
     }
@@ -3155,7 +3277,10 @@ async function taskCreate(
         ? { subtasks: children.map((child) => child.shortId) }
         : {}),
     };
-    return taskWriteAck(created, changed, created.updatedAt, warnings);
+    return {
+      ...taskWriteAck(created, changed, created.updatedAt, warnings),
+      project: target.resolution,
+    };
   });
 }
 
@@ -4383,17 +4508,6 @@ async function taskDeliver(
       .orderBy(desc(executionAttempt.startedAt))
       .limit(1);
 
-    // Usage as the board stores it: segments per model, with the flat
-    // counters derived from them. A flat-only block still arrives here as one
-    // segment for the model the attempt was claimed with.
-    const usage: UsageReport | undefined = input.usage
-      ? resolveUsageSegments(input.usage, openAttempt?.model ?? null)
-      : undefined;
-    const incomplete = isTelemetryIncomplete(usage);
-    // A flag that only says something is missing leaves the agent guessing
-    // which field to send; the reason names them.
-    const incompleteReason = telemetryIncompleteReason(usage);
-
     // The delivery usually knows the path the claim could not: the recipe
     // only prints it once the run is done. Fields it omits keep the claimed
     // value, and an attempt claimed before this column existed falls back to
@@ -4430,6 +4544,48 @@ async function taskDeliver(
           }
         : null,
     );
+
+    const finishedAt = new Date();
+    const serverDurationMs = openAttempt
+      ? Math.max(0, finishedAt.getTime() - openAttempt.startedAt.getTime())
+      : 0;
+    // Usage by reference (OCL-211): a delivery that names its transcript and
+    // sends no numbers gets them from the board, which runs the shipped recipe
+    // on that file from the claim boundary. Numbers the agent sent always win.
+    // A path this machine cannot read (the agent's disk, seen from a board in
+    // the cloud) measures nothing, and the delivery goes on as one without
+    // usage.
+    const boardMeasured = input.usage
+      ? null
+      : await usageFromTranscript({
+          cli: transcript?.cli ?? claimExecutor.cli ?? found.row.claimedByExecutor ?? null,
+          path: transcript?.path,
+          claimedAt: openAttempt?.startedAt,
+        });
+    // Usage as the board stores it: segments per model, with the flat
+    // counters derived from them. A flat-only block still arrives here as one
+    // segment for the model the attempt was claimed with.
+    const usage: UsageReport | undefined = input.usage
+      ? resolveUsageSegments(input.usage, openAttempt?.model ?? null)
+      : boardMeasured
+        ? resolveUsageSegments(
+            {
+              segments: boardMeasured.segments,
+              turns: boardMeasured.turns,
+              duration_ms: serverDurationMs,
+              estimated: false,
+            },
+            openAttempt?.model ?? null,
+          )
+        : undefined;
+    const incomplete = isTelemetryIncomplete(usage);
+    // A flag that only says something is missing leaves the agent guessing
+    // which field to send; the reason names them.
+    const incompleteReason =
+      !usage && transcript?.path
+        ? `no usage was sent and the board cannot read ${transcript.path} from where it runs — run the usage recipe and send usage with task_update`
+        : telemetryIncompleteReason(usage);
+
     // The file the card points at is the proof of which model ran. When it
     // is reachable and names one, that name wins over the claim and over
     // whatever the agent typed into usage.segments. Unreadable path → keep
@@ -4448,10 +4604,6 @@ async function taskDeliver(
           }
         : usage;
 
-    const finishedAt = new Date();
-    const serverDurationMs = openAttempt
-      ? Math.max(0, finishedAt.getTime() - openAttempt.startedAt.getTime())
-      : 0;
     const sessionId =
       transcript?.sessionId ?? openAttempt?.sessionId ?? claimExecutor.session_id ?? null;
     const usageGuard =
@@ -4487,7 +4639,7 @@ async function taskDeliver(
       : null;
     const modelChanged = Boolean(measured && measured.model !== claimedModel);
     const newModelSource: AttemptModelSource | undefined = modelChanged
-      ? fromTranscript
+      ? fromTranscript || boardMeasured
         ? "measured"
         : "declared"
       : undefined;
@@ -4620,7 +4772,7 @@ async function taskDeliver(
         delivery_verification: persisted.value.saved.deliveryVerification ?? null,
         delivery_warning: persisted.value.saved.deliveryWarning ?? null,
         telemetry_incomplete: persisted.value.incomplete,
-        ...(input.usage ? { usage_recorded: true } : {}),
+        ...(persisted.value.usage ? { usage_recorded: true } : {}),
       }),
       ...(persisted.value.incompleteReason
         ? { telemetry_incomplete_reason: persisted.value.incompleteReason }

@@ -53,6 +53,17 @@
     ],
     "PreToolUse": [
       {
+        "matcher": "task_deliver|mcp__.*__task_deliver",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/usage-fill.mjs\"",
+            "timeout": 15,
+            "statusMessage": "Measuring this card's usage from the session transcript"
+          }
+        ]
+      },
+      {
         "matcher": "*",
         "hooks": [
           {

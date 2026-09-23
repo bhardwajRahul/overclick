@@ -152,9 +152,41 @@ describe("MCP tool contracts", () => {
       updated_at: "2026-08-19T12:00:00.000Z",
       status: "aberto",
       changed: { mode: "solo" },
+      project: { id_prefix: "OC", from: "project_id" },
     });
     expect(ack).toMatchObject({ short_id: "OC-1", status: "aberto" });
     expect(WriteAckSchema.parse(ack).changed).toEqual({ mode: "solo" });
+    // OCL-208: every task_create answer says how its project was chosen.
+    expect(
+      TaskCreateOutputSchema.safeParse({
+        short_id: "OC-1",
+        updated_at: "2026-08-19T12:00:00.000Z",
+        status: "aberto",
+        changed: { mode: "solo" },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("takes repo in place of project_id on task_create, and refuses a call with neither (OCL-208)", () => {
+    const card = {
+      title: "Card",
+      type: "bug" as const,
+      o_que: "O comportamento muda.",
+      por_que: "O fluxo atual falha.",
+      como_confirmo: [{ step: "executa o teste", expected: "passa" }],
+      origem: { cli: "codex", session_id: "sess" },
+    };
+
+    expect(
+      TaskCreateInputSchema.parse({ ...card, repo: "  git@github.com:acme/app.git " }).repo,
+    ).toBe("git@github.com:acme/app.git");
+    expect(TaskCreateInputSchema.safeParse({ ...card, project_id: "OC" }).success).toBe(true);
+
+    const neither = TaskCreateInputSchema.safeParse(card);
+    expect(neither.success).toBe(false);
+    if (neither.success) return;
+    expect(neither.error.issues[0]?.message).toContain("project_id");
+    expect(neither.error.issues[0]?.message).toContain("repo");
   });
 });
 
@@ -771,6 +803,54 @@ describe("task_create canonical flow", () => {
       origem: {},
     });
     expect(result.success).toBe(false);
+  });
+});
+
+describe("task_deliver evidence shapes (OCL-212)", () => {
+  const deliver = (evidence: unknown) =>
+    TaskDeliverInputSchema.safeParse({ task_id: "OC-1", summary: "pronto", evidence });
+
+  it("keeps a single string as one text item", () => {
+    const parsed = deliver("vitest: 12 passed");
+    expect(parsed.success && parsed.data.evidence).toEqual([{ text: "vitest: 12 passed" }]);
+  });
+
+  it("keeps a list of strings as text items", () => {
+    const parsed = deliver(["tsc exit 0", "vitest exit 0"]);
+    expect(parsed.success && parsed.data.evidence).toEqual([
+      { text: "tsc exit 0" },
+      { text: "vitest exit 0" },
+    ]);
+  });
+
+  it("folds objects without text or url into text", () => {
+    const parsed = deliver([{ step: "abrir o card", result: "ok" }]);
+    expect(parsed.success && parsed.data.evidence).toEqual([
+      { text: "step: abrir o card · result: ok" },
+    ]);
+  });
+
+  it("moves a url that is not a URL into the text", () => {
+    const parsed = deliver([
+      { text: "teste novo", url: "packages/mcp-core/tests/schemas.test.ts:780" },
+      { url: "https://example.com/pr/12" },
+    ]);
+    expect(parsed.success && parsed.data.evidence).toEqual([
+      { text: "teste novo · packages/mcp-core/tests/schemas.test.ts:780" },
+      { url: "https://example.com/pr/12" },
+    ]);
+  });
+
+  it("still refuses an item with nothing to keep, and says the shape", () => {
+    const parsed = deliver([{}]);
+    expect(parsed.success).toBe(false);
+    expect(parsed.error?.issues[0]?.message).toMatch(/plain string/);
+    expect(deliver([""]).success).toBe(false);
+  });
+
+  it("defaults to an empty list", () => {
+    const parsed = deliver(undefined);
+    expect(parsed.success && parsed.data.evidence).toEqual([]);
   });
 });
 

@@ -155,6 +155,63 @@ export const ConfirmationStepSchema = z.object({
   expected: z.string().min(1),
 });
 
+/** Separators accepted between a step and its expected result, first one wins. */
+const CONFIRMATION_ARROW = /\s*(?:→|->|=>)\s*/;
+/** "1." "2)" "-" "*" "•" in front of a line are list markup, not the step. */
+const CONFIRMATION_BULLET = /^\s*(?:\d+[.)]|[-*•])\s+/;
+
+/**
+ * como_confirmo written as text (OCL-213): one step per line, "step → expected"
+ * (-> and => also separate). Models reach for this form on their own, and the
+ * JSON list around it cost both time and refusals. Blank lines are skipped and
+ * list markup is dropped; a line missing either side is refused by number, so
+ * every step still carries a binary expected result.
+ */
+export function parseConfirmationText(
+  text: string,
+): { ok: true; steps: ConfirmationStep[] } | { ok: false; message: string } {
+  const steps: ConfirmationStep[] = [];
+  const lines = text.replace(/\r\n/g, "\n").split("\n");
+  for (const [index, raw] of lines.entries()) {
+    const line = raw.replace(CONFIRMATION_BULLET, "").trim();
+    if (!line) continue;
+    const arrow = CONFIRMATION_ARROW.exec(line);
+    const step = arrow ? line.slice(0, arrow.index).trim() : "";
+    const expected = arrow ? line.slice(arrow.index + arrow[0].length).trim() : "";
+    if (!step || !expected) {
+      return {
+        ok: false,
+        message: `como_confirmo line ${index + 1} needs a step and its expected result: write one step per line as "step → expected".`,
+      };
+    }
+    steps.push({ step, expected });
+  }
+  if (steps.length === 0) {
+    return { ok: false, message: 'como_confirmo is empty: write one step per line as "step → expected".' };
+  }
+  return { ok: true, steps };
+}
+
+/**
+ * How task_create takes como_confirmo: the list of {step, expected}, or the
+ * same steps as text, one "step → expected" per line. Both are stored as the
+ * same list, so the card renders the same either way.
+ */
+export const ConfirmationStepsInputSchema = z
+  .union([z.array(ConfirmationStepSchema).min(1), z.string().trim().min(1)])
+  .describe(
+    'The steps a reviewer runs, each with a binary expected result: a list of {step, expected}, or text with one "step → expected" per line.',
+  );
+
+/** The list form of como_confirmo, whichever form was sent; null when the text is malformed. */
+export function confirmationSteps(
+  value: ConfirmationStep[] | string,
+): ConfirmationStep[] | null {
+  if (typeof value !== "string") return value;
+  const parsed = parseConfirmationText(value);
+  return parsed.ok ? parsed.steps : null;
+}
+
 export const OrigemSchema = z
   .object({
     pane_id: z.string().min(1).optional(),
@@ -303,6 +360,67 @@ export const EvidenceSchema = z
   .refine((value) => Boolean(value.text || value.url), {
     message: "evidência precisa de text ou url",
   });
+
+const isUrl = (value: string) => z.string().url().safeParse(value).success;
+
+/**
+ * One evidence item as an agent writes it, turned into `{text?, url?}`.
+ * OCL-212: 21 of the 23 deliveries that had to be written twice were refused
+ * only for the shape of `evidence` (a string, a list of strings, `{step,
+ * result}` objects, a path in `url`), and each retry rewrote the whole
+ * summary. The words are the same evidence in any of those shapes, so they
+ * are kept instead of refused.
+ */
+function normalizeEvidenceItem(item: unknown): unknown {
+  if (typeof item === "string") return item.trim() ? { text: item } : item;
+  if (!item || typeof item !== "object" || Array.isArray(item)) return item;
+  const { text, url, ...rest } = item as Record<string, unknown>;
+  const parts: string[] = [];
+  if (typeof text === "string" && text.trim()) parts.push(text);
+  if (!parts.length) {
+    for (const [key, value] of Object.entries(rest)) {
+      if (typeof value === "string" || typeof value === "number") {
+        parts.push(`${key}: ${value}`);
+      }
+    }
+  }
+  let keptUrl: string | undefined;
+  if (typeof url === "string" && url.trim()) {
+    if (isUrl(url)) keptUrl = url;
+    else parts.push(url);
+  }
+  const out: { text?: string; url?: string } = {};
+  if (parts.length) out.text = parts.join(" · ");
+  if (keptUrl) out.url = keptUrl;
+  return out;
+}
+
+/**
+ * `task_deliver.evidence` as input: a list of `{text}` / `{url}` items, a list
+ * of plain strings, or one string. Stored as `EvidenceSchema` items.
+ */
+export const EvidenceInputSchema = z.preprocess(
+  (value) => {
+    if (typeof value === "string") return value.trim() ? [value] : [];
+    return value;
+  },
+  z.array(
+    z.preprocess(
+      normalizeEvidenceItem,
+      z
+        .object({
+          text: z.string().min(1).optional(),
+          url: z.string().url().optional(),
+        })
+        .refine((value) => Boolean(value.text || value.url), {
+          message:
+            'each evidence item needs text or url: send a plain string, {"text": "..."} or {"url": "https://..."}',
+        }),
+    ),
+  ),
+).describe(
+  'List of evidence items, each {"text": "..."} or {"url": "https://..."}. Plain strings are accepted and stored as text.',
+);
 
 export const ArtifactSchema = z.discriminatedUnion("kind", [
   z.object({
@@ -459,6 +577,17 @@ export const ProjectSchema = z.object({
   next_number: z.number().int().positive(),
   cards: ProjectCardCountsSchema,
   created_at: IsoDateTimeSchema,
+});
+
+/**
+ * A project_list row by default (OCL-208): what it takes to pick a project and
+ * nothing else. The prefix is what every project_id argument accepts, so the
+ * uuid, the counters and the organization stay behind view: full.
+ */
+export const ProjectSummarySchema = z.object({
+  id_prefix: z.string().min(1),
+  name: z.string().min(1),
+  repo_url: z.string().nullable(),
 });
 
 /** The complete project payload returned by project_get and write tools. */
@@ -736,6 +865,7 @@ export type ListOptions = z.infer<typeof ListOptionsSchema>;
 export type WriteReturn = z.infer<typeof WriteReturnSchema>;
 export type WriteAck = z.infer<typeof WriteAckSchema>;
 export type Project = z.infer<typeof ProjectSchema>;
+export type ProjectSummary = z.infer<typeof ProjectSummarySchema>;
 export type ProjectDetail = z.infer<typeof ProjectDetailSchema>;
 export type ProjectCardCounts = z.infer<typeof ProjectCardCountsSchema>;
 export type Task = z.infer<typeof TaskSchema>;
