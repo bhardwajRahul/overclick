@@ -235,21 +235,33 @@ if (exists(file) === false) {
   unavailable('The Claude Code transcript ' + file + ' is missing or unreadable.');
 }
 
+// Claude Code writes one line per content block of a response (thinking,
+// text, tool_use), and every one of them repeats the response's usage under
+// the same message.id. One response is counted once: the last line seen for
+// an id wins, and a line with no id stands for itself.
 const keep = claimWindow();
-const seg = {};
-let turns = 0;
+const responses = new Map();
+let anonymous = 0;
 for (const line of readLines(file)) {
   const entry = parse(line);
   if (entry === null || keep(entry) === false) continue;
   const message = entry.message || {};
   const usage = message.usage;
   if (usage === undefined || usage === null) continue;
+  const key = typeof message.id === 'string' && message.id !== ''
+    ? 'id:' + message.id
+    : 'line:' + String(anonymous++);
+  responses.set(key, { model: message.model, usage: usage });
+}
+const seg = {};
+let turns = 0;
+for (const response of responses.values()) {
   turns += 1;
-  bump(seg, message.model, {
-    input: usage.input_tokens,
-    output: usage.output_tokens,
-    cache_read: usage.cache_read_input_tokens,
-    cache_write: usage.cache_creation_input_tokens,
+  bump(seg, response.model, {
+    input: response.usage.input_tokens,
+    output: response.usage.output_tokens,
+    cache_read: response.usage.cache_read_input_tokens,
+    cache_write: response.usage.cache_creation_input_tokens,
   });
 }
 

@@ -1198,6 +1198,11 @@ export const TaskDeliverInputSchema = z.object({
    * still accepts a missing block so a delivery is never lost, but the
    * response then carries usage_warning and the card shows "usage not
    * reported". Duration is measured server-side regardless.
+   *
+   * Omitted with a transcript.path (OCL-211), the numbers come by reference:
+   * the plugin's PreToolUse hook measures the transcript on the agent's
+   * machine, or the board runs the shipped recipe on the path when it can
+   * read it. Usage the agent sends always wins.
    */
   usage: UsageSchema.optional(),
   /**
