@@ -21,8 +21,13 @@ bugs, features, refactors, and deployments.
 2. Search before creating a card. For work with more than one card, create or
    select a mission and attach every card to it.
 3. A card is born without a harness: `o_que`, `por_que` and
-   `como_confirmo` are the whole contract. The board records which harness
-   ran a card and never decides one; that choice belongs to the Overclock app.
+   `como_confirmo` are the whole contract, and they stay required. Write
+   `como_confirmo` as a list of `{step, expected}` or as text, one
+   `step → expected` per line. Leave out what the board already has: `origem`
+   defaults to your token (send `reportado_por` when a person asked), and the
+   mission's context reaches the executor through the briefing, so do not
+   paste it into the card. The board records which harness ran a card and
+   never decides one; that choice belongs to the Overclock app.
 4. Call `task_claim` before touching the work. Declare the real CLI, exact
    model, effort and current session identifier: that is what the card records
    as the harness that ran it. The returned briefing is the self-contained

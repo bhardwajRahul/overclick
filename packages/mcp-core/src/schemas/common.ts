@@ -155,6 +155,63 @@ export const ConfirmationStepSchema = z.object({
   expected: z.string().min(1),
 });
 
+/** Separators accepted between a step and its expected result, first one wins. */
+const CONFIRMATION_ARROW = /\s*(?:→|->|=>)\s*/;
+/** "1." "2)" "-" "*" "•" in front of a line are list markup, not the step. */
+const CONFIRMATION_BULLET = /^\s*(?:\d+[.)]|[-*•])\s+/;
+
+/**
+ * como_confirmo written as text (OCL-213): one step per line, "step → expected"
+ * (-> and => also separate). Models reach for this form on their own, and the
+ * JSON list around it cost both time and refusals. Blank lines are skipped and
+ * list markup is dropped; a line missing either side is refused by number, so
+ * every step still carries a binary expected result.
+ */
+export function parseConfirmationText(
+  text: string,
+): { ok: true; steps: ConfirmationStep[] } | { ok: false; message: string } {
+  const steps: ConfirmationStep[] = [];
+  const lines = text.replace(/\r\n/g, "\n").split("\n");
+  for (const [index, raw] of lines.entries()) {
+    const line = raw.replace(CONFIRMATION_BULLET, "").trim();
+    if (!line) continue;
+    const arrow = CONFIRMATION_ARROW.exec(line);
+    const step = arrow ? line.slice(0, arrow.index).trim() : "";
+    const expected = arrow ? line.slice(arrow.index + arrow[0].length).trim() : "";
+    if (!step || !expected) {
+      return {
+        ok: false,
+        message: `como_confirmo line ${index + 1} needs a step and its expected result: write one step per line as "step → expected".`,
+      };
+    }
+    steps.push({ step, expected });
+  }
+  if (steps.length === 0) {
+    return { ok: false, message: 'como_confirmo is empty: write one step per line as "step → expected".' };
+  }
+  return { ok: true, steps };
+}
+
+/**
+ * How task_create takes como_confirmo: the list of {step, expected}, or the
+ * same steps as text, one "step → expected" per line. Both are stored as the
+ * same list, so the card renders the same either way.
+ */
+export const ConfirmationStepsInputSchema = z
+  .union([z.array(ConfirmationStepSchema).min(1), z.string().trim().min(1)])
+  .describe(
+    'The steps a reviewer runs, each with a binary expected result: a list of {step, expected}, or text with one "step → expected" per line.',
+  );
+
+/** The list form of como_confirmo, whichever form was sent; null when the text is malformed. */
+export function confirmationSteps(
+  value: ConfirmationStep[] | string,
+): ConfirmationStep[] | null {
+  if (typeof value !== "string") return value;
+  const parsed = parseConfirmationText(value);
+  return parsed.ok ? parsed.steps : null;
+}
+
 export const OrigemSchema = z
   .object({
     pane_id: z.string().min(1).optional(),
