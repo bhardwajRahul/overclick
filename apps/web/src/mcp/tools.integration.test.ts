@@ -2934,7 +2934,7 @@ describe("MCP tool edge cases against a test db", () => {
     expect(off.ok).toBe(true);
     const created = await invokeTool(world.db, ctx(), "task_create", {
       project_id: world.projectId,
-      title: "Harness que não é mais do board",
+      title: "A harness the board no longer keeps",
       type: "feature",
       o_que: "x",
       por_que: "y",
@@ -2999,7 +2999,7 @@ describe("a rejected delivery is claimed again on what the executor declares (OC
     world = await createBaseTestWorld();
     const created = await invokeTool(world.db, ctx(), "task_create", {
       project_id: world.projectId,
-      title: "Card que volta",
+      title: "Card that comes back",
       type: "bug",
       o_que: "x",
       por_que: "y",
@@ -3025,12 +3025,12 @@ describe("a rejected delivery is claimed again on what the executor declares (OC
       if (round === 2) break;
       const delivered = await invokeTool(world.db, ctx(), "task_deliver", {
         task_id: card.id,
-        summary: "reprovada",
+        summary: "rejected",
       });
       expect(delivered.ok).toBe(true);
       const reopened = await invokeTool(world.db, ctx(), "task_reopen", {
         task_id: card.id,
-        reason: "faltou o teste",
+        reason: "the test is missing",
       });
       expect(reopened.ok).toBe(true);
     }

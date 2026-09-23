@@ -133,13 +133,13 @@ export function renderBriefingMarkdown(input: {
   // reads back what the claim declared, so a missing effort shows up here.
   const execution = task.executor
     ? [
-        "## Execução registrada no claim",
+        "## Recorded at claim",
         "",
         task.executor.cli ? `- CLI: ${task.executor.cli}` : null,
-        task.executor.model ? `- modelo: ${task.executor.model}` : null,
+        task.executor.model ? `- model: ${task.executor.model}` : null,
         task.executor.effort
           ? `- effort: ${task.executor.effort}`
-          : "- effort: não declarado — envie executor.effort no task_claim para o card registrar o esforço",
+          : "- effort: not declared — send executor.effort in task_claim so the card records it",
         "",
       ].filter((line): line is string => line !== null)
     : [];

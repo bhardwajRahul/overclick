@@ -256,16 +256,16 @@ describe("self-contained briefing markdown", () => {
     expect(firstAt).toBeGreaterThan(sectionAt);
     expect(secondAt).toBeGreaterThan(firstAt);
     expect(md.indexOf("## Comentários do card")).toBeLessThan(
-      md.indexOf("## Execução registrada no claim"),
+      md.indexOf("## Recorded at claim"),
     );
   });
 
   it("reads back what the claim recorded and never a planned harness (OCL-202)", () => {
     const convention = branchConvention(task.short_id, task.title);
     const md = renderBriefingMarkdown({ task, mission, branchConvention: convention });
-    expect(md).toContain("## Execução registrada no claim");
+    expect(md).toContain("## Recorded at claim");
     expect(md).toContain("- CLI: claude-code");
-    expect(md).toContain("- modelo: sonnet-5");
+    expect(md).toContain("- model: sonnet-5");
     expect(md).toContain("- effort: medium");
     expect(md).not.toContain("## Harness");
     expect(md).not.toContain("cadeia");
@@ -275,7 +275,7 @@ describe("self-contained briefing markdown", () => {
       mission,
       branchConvention: convention,
     });
-    expect(noEffort).toContain("effort: não declarado");
+    expect(noEffort).toContain("effort: not declared");
 
     const { executor: _executor, ...unclaimed } = task;
     const beforeClaim = renderBriefingMarkdown({
@@ -283,7 +283,7 @@ describe("self-contained briefing markdown", () => {
       mission,
       branchConvention: convention,
     });
-    expect(beforeClaim).not.toContain("## Execução registrada no claim");
+    expect(beforeClaim).not.toContain("## Recorded at claim");
     expect(beforeClaim).not.toContain("## Harness");
   });
 

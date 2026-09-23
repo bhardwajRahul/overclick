@@ -40,9 +40,9 @@ describe("the board records the harness that ran and never plans one (OCL-202)",
 
   const contract = {
     type: "bug" as const,
-    o_que: "O login volta a autenticar.",
-    por_que: "Ninguém entra.",
-    como_confirmo: [{ step: "abre /login", expected: "entra na home" }],
+    o_que: "Login authenticates again.",
+    por_que: "Nobody can sign in.",
+    como_confirmo: [{ step: "open /login", expected: "lands on home" }],
     origem: { agent: "test" },
   };
 
@@ -90,7 +90,7 @@ describe("the board records the harness that ran and never plans one (OCL-202)",
 
   it("creates a card with no harness at all", async () => {
     world = await createTestWorld();
-    const created = await createCard("Nasce sem harness");
+    const created = await createCard("Born without a harness");
     expect(created.task).not.toHaveProperty("harness");
     expect(created.task.executor).toBeUndefined();
     expect(created).not.toHaveProperty("warnings");
@@ -107,14 +107,14 @@ describe("the board records the harness that ran and never plans one (OCL-202)",
   it("accepts the old harness input with a warning instead of an error, and stores nothing", async () => {
     world = await createTestWorld();
     const legacy = { cli: "codex", model: "gpt-5.6-sol", effort: "xhigh" };
-    const created = await createCard("Cliente antigo", { harness: legacy });
+    const created = await createCard("Old client", { harness: legacy });
     expect(created.warnings?.[0]).toMatch(/harness was ignored/);
     expect(await storedHarness(created.task.id)).toBeNull();
 
     // The compact acknowledgement carries the same warning.
     const ack = await invokeTool(world.db, ctx(), "task_create", {
       project_id: world.projectId,
-      title: "Cliente antigo, ack",
+      title: "Old client, ack",
       ...contract,
       harness: legacy,
       return: "ack",
@@ -129,9 +129,9 @@ describe("the board records the harness that ran and never plans one (OCL-202)",
     expect(parsedAck.changed).not.toHaveProperty("harness");
 
     // Subtasks too: a team card with a per-child harness still lands.
-    const team = await createCard("Time antigo", {
+    const team = await createCard("Old team card", {
       mode: "team",
-      subtasks: [{ title: "parte", scope: "x", boundary: "y", harness: legacy }],
+      subtasks: [{ title: "part", scope: "x", boundary: "y", harness: legacy }],
     });
     expect(team.warnings?.[0]).toMatch(/harness was ignored/);
     expect(await storedHarness(team.subtasks[0]!.id)).toBeNull();
@@ -139,7 +139,7 @@ describe("the board records the harness that ran and never plans one (OCL-202)",
     // task_update applies the rest of the update and ignores the harness.
     const updated = await invokeTool(world.db, ctx(), "task_update", {
       task_id: created.task.short_id,
-      comment: "ainda editável",
+      comment: "still editable",
       harness: legacy,
     });
     expect(updated.ok).toBe(true);
@@ -166,7 +166,7 @@ describe("the board records the harness that ran and never plans one (OCL-202)",
 
   it("tolerates include harness on task_list and task_search, with a warning", async () => {
     world = await createTestWorld();
-    await createCard("Fila antiga");
+    await createCard("Old queue");
     const listed = await invokeTool(world.db, ctx(), "task_list", { include: ["harness"] });
     expect(listed.ok).toBe(true);
     if (!listed.ok) return;
@@ -181,7 +181,7 @@ describe("the board records the harness that ran and never plans one (OCL-202)",
     expect(TaskListOutputSchema.parse(plain.value)).not.toHaveProperty("warnings");
 
     const searched = await invokeTool(world.db, ctx(), "task_search", {
-      q: "Fila antiga",
+      q: "Old queue",
       include: ["harness"],
     });
     expect(searched.ok).toBe(true);
@@ -193,7 +193,7 @@ describe("the board records the harness that ran and never plans one (OCL-202)",
 
   it("records on the card the cli, model and effort the claim runs with", async () => {
     world = await createTestWorld();
-    const created = await createCard("Registra a execução");
+    const created = await createCard("Records the run");
     const claimed = await invokeTool(world.db, ctx(), "task_claim", {
       task_id: created.task.short_id,
       executor: { cli: "claude-code", model: "opus-5", effort: "max", session_id: "s-202" },
@@ -204,7 +204,7 @@ describe("the board records the harness that ran and never plans one (OCL-202)",
     expect(out.task.executor).toEqual({ cli: "claude-code", model: "opus-5", effort: "max" });
     expect(out.attempt.executor).toMatchObject({ cli: "claude-code", model: "opus-5", effort: "max" });
     expect(out).not.toHaveProperty("harness_divergence");
-    expect(out.briefing_markdown).toContain("## Execução registrada no claim");
+    expect(out.briefing_markdown).toContain("## Recorded at claim");
     expect(out.briefing_markdown).toContain("- effort: max");
     expect(out.briefing_markdown).not.toContain("## Harness");
 
@@ -220,7 +220,7 @@ describe("the board records the harness that ran and never plans one (OCL-202)",
 
   it("keeps a claim that sends no effort valid, and says the effort went undeclared", async () => {
     world = await createTestWorld();
-    const created = await createCard("Claim antigo sem effort");
+    const created = await createCard("Old claim without effort");
     const claimed = await invokeTool(world.db, ctx(), "task_claim", {
       task_id: created.task.short_id,
       executor: { cli: "claude-code", model: "sonnet-5", session_id: "s-old" },
@@ -229,7 +229,7 @@ describe("the board records the harness that ran and never plans one (OCL-202)",
     if (!claimed.ok) return;
     const out = TaskClaimOutputSchema.parse(claimed.value);
     expect(out.task.executor).toEqual({ cli: "claude-code", model: "sonnet-5" });
-    expect(out.briefing_markdown).toContain("effort: não declarado");
+    expect(out.briefing_markdown).toContain("effort: not declared");
   });
 
   it("hides the planned harness an old card still stores, without erasing it", async () => {
@@ -239,7 +239,7 @@ describe("the board records the harness that ran and never plans one (OCL-202)",
       .values({
         projectId: world.projectId,
         shortId: "OC-90",
-        title: "Card de antes do OCL-202",
+        title: "Card from before OCL-202",
         harness: { cli: "codex", model: "gpt-5.6-sol", effort: "xhigh" },
       })
       .returning();
@@ -275,7 +275,7 @@ describe("the board records the harness that ran and never plans one (OCL-202)",
 
   it("claims a reopened card on what the executor declares, never on an escalated model", async () => {
     world = await createTestWorld();
-    const created = await createCard("Reaberto");
+    const created = await createCard("Reopened");
     const first = await invokeTool(world.db, ctx(), "task_claim", {
       task_id: created.task.short_id,
       executor: { cli: "claude-code", model: "sonnet-5", effort: "medium", session_id: "s-1" },
@@ -283,13 +283,13 @@ describe("the board records the harness that ran and never plans one (OCL-202)",
     expect(first.ok).toBe(true);
     const delivered = await invokeTool(world.db, ctx(), "task_deliver", {
       task_id: created.task.short_id,
-      summary: "primeira entrega",
+      summary: "first delivery",
       usage: { segments: [{ model: "sonnet-5", input: 10, output: 5 }], turns: 1 },
     });
     expect(delivered.ok).toBe(true);
     const reopened = await invokeTool(world.db, ctx(), "task_reopen", {
       task_id: created.task.short_id,
-      reason: "faltou o teste",
+      reason: "the test is missing",
     });
     expect(reopened.ok).toBe(true);
 
