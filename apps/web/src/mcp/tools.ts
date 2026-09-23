@@ -34,6 +34,7 @@ import {
   applyContextOps,
   applyTransition,
   branchConvention,
+  confirmationSteps,
   discardRefusal,
   err,
   evaluateClaim,
@@ -3074,7 +3075,7 @@ async function taskCreate(
     type: Task["type"];
     o_que?: string;
     por_que?: string;
-    como_confirmo?: Task["como_confirmo"];
+    como_confirmo?: Task["como_confirmo"] | string;
     supersedes?: string;
     inherit?: boolean;
     priority?: Task["priority"];
@@ -3092,7 +3093,7 @@ async function taskCreate(
     }>;
     devolve_para?: Reviewer;
     harness?: Harness;
-    origem: Task["origem"];
+    origem?: Task["origem"];
     return?: "ack" | "full";
   },
 ) {
@@ -3139,6 +3140,14 @@ async function taskCreate(
       : undefined;
 
   const reviewer = reviewerToColumns(input.devolve_para);
+  // The board fills what it already knows (OCL-213): with no origem, the card
+  // records the token that filed it.
+  const origin = originToDb(input.origem ?? { agent: ctx.tokenLabel });
+  // Text como_confirmo was already checked line by line by the input schema.
+  const sentSteps =
+    input.como_confirmo === undefined
+      ? undefined
+      : (confirmationSteps(input.como_confirmo) ?? undefined);
 
   return db.transaction(async (tx) => {
     const original = input.supersedes
@@ -3160,7 +3169,7 @@ async function taskCreate(
     const oQue = input.o_que ?? (input.inherit ? original?.row.oQue : undefined);
     const porQue = input.por_que ?? (input.inherit ? original?.row.porQue : undefined);
     const comoConfirmo =
-      input.como_confirmo ??
+      sentSteps ??
       (input.inherit && original
         ? parseComoConfirmo(original.row.comoConfirmo)
         : undefined);
@@ -3204,7 +3213,7 @@ async function taskCreate(
         status: "aberto",
         priority: input.priority ?? "media",
         ...reviewer,
-        origin: originToDb(input.origem),
+        origin,
         mode: input.mode,
       })
       .returning();
@@ -3241,7 +3250,7 @@ async function taskCreate(
           status: "aberto",
           priority: input.priority ?? "media",
           ...reviewerToColumns(item.devolve_para ?? input.devolve_para),
-          origin: originToDb(input.origem),
+          origin,
           mode: "solo",
         })
         .returning();

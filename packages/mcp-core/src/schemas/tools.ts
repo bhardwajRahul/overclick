@@ -3,7 +3,8 @@ import {
   ArtifactSchema,
   BranchConventionSchema,
   CardStatusSchema,
-  ConfirmationStepSchema,
+  ConfirmationStepsInputSchema,
+  parseConfirmationText,
   DEPRECATED_HARNESS_INPUT,
   DeliveryVerificationSchema,
   EffortSchema,
@@ -832,7 +833,7 @@ export const TaskCreateInputSchema = z
     type: TaskTypeSchema,
     o_que: z.string().min(1).optional(),
     por_que: z.string().min(1).optional(),
-    como_confirmo: z.array(ConfirmationStepSchema).min(1).optional(),
+    como_confirmo: ConfirmationStepsInputSchema.optional(),
     /** Existing in-execution card replaced atomically by this one. */
     supersedes: TaskIdSchema.optional(),
     /** Reuse the superseded card contract fields omitted by this request. */
@@ -843,7 +844,14 @@ export const TaskCreateInputSchema = z
     subtasks: z.array(SubtaskCreateSchema).optional(),
     devolve_para: ReviewerSchema.optional(),
     harness: HarnessSchema.optional().describe(DEPRECATED_HARNESS_INPUT),
-    origem: OrigemSchema,
+    /**
+     * Who filed the card. Omitted, the board records the token that filed it
+     * (OCL-213); send it only for what the board cannot know, such as the
+     * person who asked (reportado_por) or the pane.
+     */
+    origem: OrigemSchema.optional().describe(
+      "Optional: omitted, the board records the token that filed the card. Send only what it cannot know, such as reportado_por when a person asked for the card.",
+    ),
     /** Mutations are compact by default; request the complete card explicitly. */
     return: WriteReturnSchema.optional(),
   }).strict()
@@ -862,6 +870,16 @@ export const TaskCreateInputSchema = z
         path: ["inherit"],
         message: "inherit requires supersedes",
       });
+    }
+    if (typeof value.como_confirmo === "string") {
+      const parsed = parseConfirmationText(value.como_confirmo);
+      if (!parsed.ok) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["como_confirmo"],
+          message: parsed.message,
+        });
+      }
     }
     for (const key of ["o_que", "por_que", "como_confirmo"] as const) {
       if (value[key] === undefined && !value.inherit) {
