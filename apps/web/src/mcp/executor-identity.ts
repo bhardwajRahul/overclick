@@ -1,10 +1,14 @@
 import {
   normalizeModelKey,
   type ExecutorConfig,
-  type Harness as DbHarness,
 } from "@agent-board/db";
 import { resolveCatalogCli } from "../lib/executors";
 
+/**
+ * "harness" is the historical name for a model the board inferred rather than
+ * was told: from the card's planned harness before OCL-202, and still today
+ * from a Codex legacy label that carries no version.
+ */
 export type AttemptModelSource = "declared" | "harness" | "measured";
 
 export type ClaimExecutorInput = {
@@ -28,18 +32,14 @@ const GENERIC_MODELS = new Set(["", "gpt-5", "codex", "claude", "o4-mini"]);
 
 /**
  * CLI names come from binaries and orchestrators, while the catalog uses one
- * stable id per connection. `overclock` is not an executor: when it appears
- * on a claim, the card's harness names the CLI that really received the work.
+ * stable id per connection. The board records the CLI the claim declared: it
+ * has no planned harness to substitute for it (OCL-202).
  */
 export function normalizeClaimCli(
   declared: string | null | undefined,
-  harnessCli?: string | null,
 ): string | undefined {
   const raw = declared?.trim();
-  if (!raw) return harnessCli ? normalizeClaimCli(harnessCli) : undefined;
-  if (raw.toLowerCase() === "overclock" && harnessCli) {
-    return normalizeClaimCli(harnessCli);
-  }
+  if (!raw) return undefined;
   if (raw.toLowerCase() === "codex cli") return "codex";
   return raw.toLowerCase();
 }
@@ -50,27 +50,25 @@ export function isGenericModelLabel(model: string | null | undefined): boolean {
 }
 
 /**
- * Resolves the executor identity stored by task_claim.
+ * Resolves the executor identity stored by task_claim: what the card records
+ * as the harness that ran it (OCL-202).
  *
  * Exact declarations canonicalize spelling aliases, never billing aliases.
- * Generic declarations inherit the card harness. Codex's two
- * legacy labels also have a safe no-harness fallback confirmed by the owner.
+ * A generic label records no model, so the usage measures one later; the one
+ * exception is Codex's two legacy labels, whose fallback the owner confirmed.
+ * Nothing is taken from a planned harness: the board no longer plans one.
  */
 export function resolveClaimExecutor(
   input: ClaimExecutorInput | null | undefined,
-  harness: Pick<DbHarness, "cli" | "model"> | null | undefined,
 ): ResolvedClaimExecutor {
-  const cli = normalizeClaimCli(input?.cli, harness?.cli);
+  const cli = normalizeClaimCli(input?.cli);
   const rawModel = input?.model?.trim();
   const generic = isGenericModelLabel(rawModel);
-  const harnessModel = harness?.model ? normalizeModelKey(harness.model) : "";
   const codexFallback =
     cli === "codex" && ["gpt-5", "o4-mini"].includes(rawModel?.toLowerCase() ?? "")
       ? DEFAULT_CODEX_MODEL
       : "";
-  const model = generic
-    ? harnessModel || codexFallback
-    : normalizeModelKey(rawModel ?? "");
+  const model = generic ? codexFallback : normalizeModelKey(rawModel ?? "");
   const modelSource: AttemptModelSource | undefined = model
     ? generic
       ? "harness"
@@ -139,8 +137,8 @@ function isKnownClaimCli(
  * Refuses a task_claim whose declared model matches nothing the workspace has
  * configured. Replaces the OCL-148 blacklist: that list only ever caught the
  * four family names it already knew about ("", gpt-5, codex, claude, o4-mini
- * — left alone here since resolveClaimExecutor's harness/Codex fallback
- * already handles them), so grok-4 and grok-4-fast, never listed, landed as
+ * — left alone here since resolveClaimExecutor's Codex fallback already
+ * handles them), so grok-4 and grok-4-fast, never listed, landed as
  * if they were registered models the board actually ran, splitting Insights
  * into twin rows.
  *

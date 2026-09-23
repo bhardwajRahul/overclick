@@ -91,10 +91,6 @@ export function payloadOf(document) {
   return JSON.parse(document?.result?.content?.[0]?.text ?? "{}");
 }
 
-function harnessSignature(harness) {
-  return ["cli", "model", "effort"].map((key) => harness?.[key] ?? "").join("|");
-}
-
 // Returns the rendered lines, or null when the answer is not the expected JSON.
 export function renderBoard(rawResponse, heading) {
   const document = parseJson(rawResponse);
@@ -123,20 +119,6 @@ export function countTasks(rawResponse) {
     return (payloadOf(document).tasks ?? []).length;
   } catch {
     return 0;
-  }
-}
-
-export function hookHarness(hookInput) {
-  return harnessSignature(hookInput?.tool_input?.harness);
-}
-
-export function recommendationHarness(rawResponse) {
-  const document = parseJson(rawResponse);
-  if (!document) return "";
-  try {
-    return harnessSignature(payloadOf(document).harness);
-  } catch {
-    return "";
   }
 }
 

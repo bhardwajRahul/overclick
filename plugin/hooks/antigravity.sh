@@ -192,15 +192,6 @@ case "$event" in
 
   pre-tool)
     case "$tool_name" in
-      task_create|mcp__*__task_create)
-        verdict=$(printf '%s' "$normalized" | node "$SCRIPT_DIR/pre-create.mjs" 2>/dev/null || true)
-        case "$verdict" in
-          *'"decision":"block"'*)
-            printf '{"decision":"deny","reason":"%s"}\n' "$(oc_agy_escape "$(oc_agy_reason "$verdict")")"
-            ;;
-          *) oc_agy_allow ;;
-        esac
-        ;;
       task_deliver|mcp__*__task_deliver)
         # Antigravity's PostToolUse has no channel back to the model, so the
         # push check moves ahead of the call. It asks instead of denying: the

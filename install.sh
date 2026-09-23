@@ -370,13 +370,11 @@ if ! package_version=$(plugin_dir_version "$source_root/plugin"); then
 fi
 
 enforce_stop=$(read_private_setting enforce_stop 2>/dev/null || printf '0')
-enforce_harness=$(read_private_setting enforce_harness 2>/dev/null || printf '0')
 enforce_claim=$(read_private_setting enforce_claim 2>/dev/null || printf '0')
 cat >"$private_config" <<EOF
 url=$mcp_url
 token=$token
 enforce_stop=$enforce_stop
-enforce_harness=$enforce_harness
 enforce_claim=$enforce_claim
 EOF
 secure_perms 600 "$private_config"

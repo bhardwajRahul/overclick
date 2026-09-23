@@ -115,7 +115,9 @@ describe("MCP end-to-end against a test db", () => {
       expect(created.task.workspace_id).toBe(world.workspaceId);
       expect(created.task.mission_id).toBe(world.missionId);
       expect(created.task.status).toBe("aberto");
-      expect(created.task.harness?.model).toBe("fable-5");
+      // OCL-202: the card is born without a harness and has run on nothing yet.
+      expect(created.task).not.toHaveProperty("harness");
+      expect(created.task.executor).toBeUndefined();
       expect(created.task.devolve_para).toEqual({
         kind: "agent",
         session_id: "sess_torre",
@@ -147,7 +149,9 @@ describe("MCP end-to-end against a test db", () => {
       expect(claimed.task.status).toBe("em_execucao");
       expect(claimed.attempt.task_id).toBe(created.task.id);
       expect(claimed.attempt.finished_at).toBeNull();
-      expect(claimed.harness_divergence?.warning).toMatch(/opus-5/i);
+      // The claim is what the card records as the harness that ran it.
+      expect(claimed.task.executor).toEqual({ cli: "claude-code", model: "opus-5" });
+      expect(claimed).not.toHaveProperty("harness_divergence");
       expect(claimed.briefing_markdown).toContain("## Convenção");
 
       const handoff = parseTool(

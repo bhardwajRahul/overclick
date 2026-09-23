@@ -18,8 +18,9 @@ real telemetry: tokens per model, and time.
 1. **You create a card.** A contract, not a ticket: *What* should happen, *Why*, and
    *How to confirm it* (a plain-language test script).
 2. **Your agent picks it up.** "Grab the next task from the board." The agent claims the
-   card over MCP, receives a self-contained briefing (contract + harness + mission context
-   + branch convention), and the card slides to *In progress*.
+   card over MCP, declares what it runs on (CLI, exact model, effort), receives a
+   self-contained briefing (contract + mission context + branch convention), and the card
+   slides to *In progress*.
 3. **The agent delivers.** A handoff with summary, evidence, branch/PR links, and real
    telemetry: tokens per model and duration. The briefing tells the agent exactly how to
    read those numbers off its own session transcript, so they are measured, not guessed.
@@ -82,13 +83,11 @@ one pass, use `install.sh` instead — see [docs/design/plugin.md](docs/design/p
 - **Cards are contracts.** *What / Why / How to confirm*, written before the work, so
   review is a script instead of a vibe. `Done != Validated`: merge is the machine's
   opinion, validation is yours.
-- **Harness policy, not model roulette.** You declare which CLIs/models your team has and
-  map twenty activity types to executors: a dictated tweak and a repo-wide migration are
-  both "code" and belong nowhere near each other in a routing table. Every line is a chain,
-  not a single name: first choice, escalation, floor. The board claims the first link it can
-  actually run, so switching an executor off degrades the policy instead of voiding it.
-  Agents read it over MCP (`harness_list`) and every card is born with the right harness
-  recommended.
+- **It records what ran, it does not pick it.** A card is born as a contract, with no
+  model attached. The agent that claims it declares what it really runs on (CLI, exact
+  model, effort) and the delivery adds the measured tokens per model, so the card carries
+  what happened instead of a forecast. Which harness runs what is decided where the work is
+  launched; the board keeps that record honest.
 - **Three roles per card.** Who requested it, who executed it, and who it returns to for
   review. The person who delegates isn't always the person who checks.
 - **RFCs as cards.** Big decisions become `rfc` cards whose deliverable is a document;
@@ -107,15 +106,13 @@ one pass, use `install.sh` instead — see [docs/design/plugin.md](docs/design/p
 
 ## MCP surface
 
-26 tools: `project_list` · `project_get` · `project_create` · `project_update` · `project_delete` ·
+32 tools, including `project_list` · `project_get` · `project_create` · `project_update` · `project_delete` ·
 `mission_list` · `mission_get` · `mission_create` · `mission_update` · `mission_delete` ·
 `task_list` · `task_get` · `task_create` · `task_search` · `task_claim` · `task_release` ·
 `task_heartbeat` · `task_update` · `task_deliver` ·
-`task_delete` · `branch_register` · `harness_recommend` · `harness_list` · `harness_set` ·
-`executors_update` · `insights_query`. Streamable HTTP, bearer tokens, atomic claims, typed errors. The
+`task_delete` · `branch_register` · `executors_update` · `insights_query`. Streamable HTTP, bearer tokens, atomic claims, typed errors. The
 configuration tools sit behind a per-token manage flag, off by default. See
-[`docs/mcp.md`](docs/mcp.md), and [`docs/harness-routing.md`](docs/harness-routing.md) for
-the full shipped MCP surface and why each one routes the way it does.
+[`docs/mcp.md`](docs/mcp.md) for the full shipped MCP surface.
 
 Works with any MCP-capable agent. Built to shine with
 [Overclock](https://overclock.sh): squads, visible panes, and precise per-card telemetry.

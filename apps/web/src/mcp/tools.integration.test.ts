@@ -1,6 +1,5 @@
 import {
   TaskDeliverFullOutputSchema as TaskDeliverOutputSchema,
-  HarnessRecommendOutputSchema,
   MissionCreateOutputSchema,
   MissionDeleteOutputSchema,
   MissionGetOutputSchema,
@@ -118,9 +117,9 @@ describe("MCP tool edge cases against a test db", () => {
     if (!updated.ok) return;
     const updateAck = TaskUpdateAckOutputSchema.parse(updated.value);
     if ("task" in updateAck) throw new Error("expected the compact task_update acknowledgement");
-    expect(updateAck.changed).toMatchObject({
-      harness: { model: "opus-5", effort: "high" },
-    });
+    // OCL-202: the harness is ignored with a warning, so nothing changed.
+    expect(updateAck.changed).toEqual({});
+    expect(updateAck.warnings?.[0]).toMatch(/harness was ignored/);
     expect(updated.value).not.toHaveProperty("task");
 
     const full = await invokeMcpTool(world.db, ctx(), "task_update", {
@@ -166,10 +165,12 @@ describe("MCP tool edge cases against a test db", () => {
     expect(out.task.o_que).toContain("## Plano");
     expect(out.subtasks).toHaveLength(2);
     expect(out.subtasks[0]?.short_id).toBe(`${out.task.short_id}.1`);
-    expect(out.task.harness?.model).toBe("opus-5");
+    // OCL-202: a team card and its subtasks are born without a harness.
+    expect(out.task).not.toHaveProperty("harness");
+    expect(out.subtasks[0]).not.toHaveProperty("harness");
   });
 
-  it("uses the harness model when Codex claims with generic gpt-5", async () => {
+  it("falls back to the confirmed Codex model on generic gpt-5, never to the card's old plan", async () => {
     world = await createTestWorld();
     const [card] = await world.db
       .insert(task)
@@ -2014,46 +2015,22 @@ describe("MCP tool edge cases against a test db", () => {
     return TaskCreateOutputSchema.parse(created.value).task;
   }
 
-  it("records planned vs actual on the timeline when the claim executor differs", async () => {
+  it("records what the claim runs on, with no planned-vs-actual entry (OCL-202)", async () => {
     world = await createTestWorld();
-    const card = await createPlainCard("Swapped executor");
-    expect(card.harness?.model).toBeTruthy();
+    const card = await createPlainCard("Whatever runs it");
+    expect(card).not.toHaveProperty("harness");
 
     const claimed = await invokeTool(world.db, ctx(), "task_claim", {
       task_id: card.id,
-      // Registered, and deliberately not what the card planned: divergence
-      // is about the plan versus what actually ran, and both sides have to be
-      // real executors — an unregistered one never gets this far (OCL-170).
-      executor: { cli: "grok", model: "grok-4.5", session_id: "sess_swap" },
+      // Any registered executor is simply what ran: there is no plan to
+      // diverge from, so there is nothing to warn about.
+      executor: { cli: "grok", model: "grok-4.5", effort: "high", session_id: "sess_swap" },
     });
     expect(claimed.ok).toBe(true);
     if (!claimed.ok) return;
     const out = TaskClaimOutputSchema.parse(claimed.value);
-    expect(out.harness_divergence?.warning).toContain("grok-4-5");
-
-    const entries = await world.db
-      .select()
-      .from(taskComment)
-      .where(eq(taskComment.taskId, card.id));
-    const swap = entries.find((entry) => entry.kind === "executor_swap");
-    expect(swap).toBeTruthy();
-    expect(swap?.body).toContain(`planned`);
-    expect(swap?.body).toContain(card.harness?.model ?? "");
-    expect(swap?.body).toContain("actual grok · grok-4-5");
-  });
-
-  it("keeps the timeline clean when the executor matches the harness", async () => {
-    world = await createTestWorld();
-    const card = await createPlainCard("Matching executor");
-    const claimed = await invokeTool(world.db, ctx(), "task_claim", {
-      task_id: card.id,
-      executor: {
-        cli: "claude-code",
-        model: card.harness?.model ?? "sonnet-5",
-        session_id: "sess_match",
-      },
-    });
-    expect(claimed.ok).toBe(true);
+    expect(out).not.toHaveProperty("harness_divergence");
+    expect(out.task.executor).toEqual({ cli: "grok", model: "grok-4-5", effort: "high" });
 
     const entries = await world.db
       .select()
@@ -2079,8 +2056,9 @@ describe("MCP tool edge cases against a test db", () => {
       .from(taskComment)
       .where(eq(taskComment.taskId, card.id));
     const failure = entries.find((entry) => entry.kind === "spawn_failure");
-    expect(failure?.body).toContain("kimi-cli exited 127 before boot");
-    expect(failure?.body).toContain("planned");
+    // The note is what the orchestrator said, with no planned harness
+    // appended: the board no longer plans one (OCL-202).
+    expect(failure?.body).toBe("kimi-cli exited 127 before boot");
 
     // The trace is not a reopen instruction: the next claim briefing must
     // not carry it as the reopen comment.
@@ -2197,9 +2175,9 @@ describe("MCP tool edge cases against a test db", () => {
     const secondAt = section.indexOf("remove o card parcial do carrossel");
     expect(firstAt).toBeGreaterThan(-1);
     expect(secondAt).toBeGreaterThan(firstAt);
-    // The section sits right after the contract it refines, before ## Harness.
+    // The section sits right after the contract it refines, before ## Missão.
     expect(out.briefing_markdown.indexOf("## Comentários do card")).toBeLessThan(
-      out.briefing_markdown.indexOf("## Harness"),
+      out.briefing_markdown.indexOf("## Missão"),
     );
   });
 
@@ -2566,22 +2544,23 @@ describe("MCP tool edge cases against a test db", () => {
       id: card.id,
       short_id: card.short_id,
       mission_id: world.missionId,
-      harness: card.harness,
     });
+    expect(allRow).not.toHaveProperty("harness");
 
-    // include: ["harness"] alone is what dispatch needs from this one call.
+    // include: ["harness"] is still accepted (OCL-202 transition) but adds
+    // nothing to the row: cards no longer carry a planned harness.
     const listedForDispatch = await invokeTool(world.db, ctx(), "task_list", {
       limit: 10,
       include: ["harness"],
     });
     expect(listedForDispatch.ok).toBe(true);
     if (!listedForDispatch.ok) return;
-    const dispatchRow = TaskListOutputSchema.parse(listedForDispatch.value).tasks.find(
-      (row) => row.short_id === card.short_id,
-    );
-    expect(dispatchRow).toMatchObject({ harness: card.harness });
+    const dispatchList = TaskListOutputSchema.parse(listedForDispatch.value);
+    const dispatchRow = dispatchList.tasks.find((row) => row.short_id === card.short_id);
+    expect(dispatchRow).not.toHaveProperty("harness");
     expect(dispatchRow).not.toHaveProperty("id");
     expect(dispatchRow).not.toHaveProperty("mission_id");
+    expect(dispatchList.warnings?.[0]).toMatch(/include harness was ignored/);
 
     const compact = await invokeTool(world.db, ctx(), "task_get", {
       task_id: card.id,
@@ -2765,7 +2744,7 @@ describe("MCP tool edge cases against a test db", () => {
     expect(byTitle.error.code).toBe("NOT_FOUND");
   });
 
-  it("lists missions, recommends harness, registers a branch and marks revisado", async () => {
+  it("lists missions, registers a branch and marks revisado", async () => {
     world = await createTestWorld();
 
     const missions = await invokeTool(world.db, ctx(), "mission_list", {});
@@ -2773,15 +2752,6 @@ describe("MCP tool edge cases against a test db", () => {
     if (!missions.ok) return;
     expect(MissionListOutputSchema.parse(missions.value).missions[0]?.title).toBe(
       "Norte do board",
-    );
-
-    const rec = await invokeTool(world.db, ctx(), "harness_recommend", {
-      type: "bug",
-    });
-    expect(rec.ok).toBe(true);
-    if (!rec.ok) return;
-    expect(HarnessRecommendOutputSchema.parse(rec.value).harness.model).toBe(
-      "fable-5",
     );
 
     const created = await invokeTool(world.db, ctx(), "task_create", {
@@ -2954,78 +2924,7 @@ describe("MCP tool edge cases against a test db", () => {
     expect(handoffRows).toHaveLength(0);
   });
 
-  it("reclassifies the card harness via task_update, validated against executors", async () => {
-    world = await createTestWorld();
-    const created = await invokeTool(world.db, ctx(), "task_create", {
-      project_id: world.projectId,
-      title: "Card para reclassificar",
-      type: "feature",
-      o_que: "x",
-      por_que: "y",
-      como_confirmo: [{ step: "a", expected: "b" }],
-      origem,
-    });
-    expect(created.ok).toBe(true);
-    if (!created.ok) return;
-    const card = TaskCreateOutputSchema.parse(created.value).task;
-
-    const updated = await invokeTool(world.db, ctx(), "task_update", {
-      task_id: card.id,
-      harness: { cli: "claude-code", model: "haiku-4-5", effort: "low" },
-    });
-    expect(updated.ok).toBe(true);
-    if (!updated.ok) return;
-    const out = TaskUpdateOutputSchema.parse(updated.value);
-    expect(out.task.harness).toEqual({
-      cli: "claude-code",
-      model: "haiku-4-5",
-      effort: "low",
-    });
-
-    const fetched = await invokeTool(world.db, ctx(), "task_get", {
-      task_id: card.id,
-    });
-    expect(fetched.ok).toBe(true);
-    if (!fetched.ok) return;
-    const got = fetched.value as { task: { harness: unknown } };
-    expect(got.task.harness).toEqual({
-      cli: "claude-code",
-      model: "haiku-4-5",
-      effort: "low",
-    });
-  });
-
-  it("rejects a harness whose model is not on any configured executor", async () => {
-    world = await createTestWorld();
-    const created = await invokeTool(world.db, ctx(), "task_create", {
-      project_id: world.projectId,
-      title: "Harness inválido",
-      type: "feature",
-      o_que: "x",
-      por_que: "y",
-      como_confirmo: [{ step: "a", expected: "b" }],
-      origem,
-    });
-    expect(created.ok).toBe(true);
-    if (!created.ok) return;
-    const card = TaskCreateOutputSchema.parse(created.value).task;
-
-    const badModel = await invokeTool(world.db, ctx(), "task_update", {
-      task_id: card.id,
-      harness: { model: "gpt-9-ultra", effort: "high" },
-    });
-    expect(badModel.ok).toBe(false);
-    if (!badModel.ok) expect(badModel.error.code).toBe("INVALID_ARGUMENT");
-
-    const badCli = await invokeTool(world.db, ctx(), "task_update", {
-      task_id: card.id,
-      harness: { cli: "codex", model: "haiku-4-5", effort: "low" },
-    });
-    expect(badCli.ok).toBe(false);
-    if (!badCli.ok) expect(badCli.error.code).toBe("INVALID_ARGUMENT");
-  });
-
-  it("rejects a harness naming a disabled executor's model instead of blocking (OCL-77, refines OCL-75)", async () => {
+  it("ignores a harness sent to task_update, even one naming an unknown or disabled model (OCL-202)", async () => {
     world = await createTestWorld();
     const off = await invokeTool(world.db, { ...ctx(), canManage: true }, "executors_update", {
       cli: "claude-code",
@@ -3033,10 +2932,9 @@ describe("MCP tool edge cases against a test db", () => {
       return: "ack",
     });
     expect(off.ok).toBe(true);
-
     const created = await invokeTool(world.db, ctx(), "task_create", {
       project_id: world.projectId,
-      title: "Harness num executor desligado",
+      title: "Harness que não é mais do board",
       type: "feature",
       o_que: "x",
       por_que: "y",
@@ -3047,28 +2945,27 @@ describe("MCP tool edge cases against a test db", () => {
     if (!created.ok) return;
     const card = TaskCreateOutputSchema.parse(created.value).task;
 
-    // haiku-4-5 exists on claude-code, but claude-code is off: the write is
-    // a typed rejection, not a silent accept with a warning.
-    const updated = await invokeTool(world.db, ctx(), "task_update", {
-      task_id: card.id,
-      harness: { cli: "claude-code", model: "haiku-4-5", effort: "low" },
-    });
-    expect(updated.ok).toBe(false);
-    if (updated.ok) return;
-    expect(updated.error.code).toBe("INVALID_ARGUMENT");
-    expect(updated.error.message).toContain("claude-code");
-    expect(updated.error.message).toContain("disabled");
-
-    // The card's harness is untouched by the rejected write, and other
-    // fields on it stay editable (OCL-77 item 4).
-    const reread = await invokeTool(world.db, ctx(), "task_update", {
-      task_id: card.id,
-      comment: "still editable without touching the harness",
-    });
-    expect(reread.ok).toBe(true);
-    if (!reread.ok) return;
-    const out = TaskUpdateOutputSchema.parse(reread.value);
-    expect(out.task.harness).toEqual(card.harness);
+    // Before OCL-202 each of these was validated and could be refused. The
+    // board no longer stores a harness, so there is nothing left to validate:
+    // an old client gets a warning and the rest of its update goes through.
+    for (const harness of [
+      { cli: "claude-code", model: "haiku-4-5", effort: "low" },
+      { model: "gpt-9-ultra", effort: "high" },
+      { cli: "codex", model: "haiku-4-5", effort: "low" },
+    ]) {
+      const updated = await invokeTool(world.db, ctx(), "task_update", {
+        task_id: card.id,
+        comment: "still editable",
+        harness,
+      });
+      expect(updated.ok).toBe(true);
+      if (!updated.ok) return;
+      const out = TaskUpdateOutputSchema.parse(updated.value);
+      expect(out.warnings?.[0]).toMatch(/harness was ignored/);
+      expect(out.task).not.toHaveProperty("harness");
+    }
+    const [row] = await world.db.select().from(task).where(eq(task.id, card.id));
+    expect(row?.harness).toBeNull();
   });
 
   it("returns NOT_FOUND when deleting a card that does not exist", async () => {
@@ -3083,9 +2980,7 @@ describe("MCP tool edge cases against a test db", () => {
   });
 });
 
-// Escalation here climbs into gpt-5.6-sol and needs it to stay unconfigured,
-// so this block uses the base world instead of the file's codex/grok wrapper.
-describe("a rejected delivery comes back one link down the chain", () => {
+describe("a rejected delivery is claimed again on what the executor declares (OCL-202)", () => {
   let world: TestWorld;
 
   afterEach(async () => {
@@ -3100,18 +2995,11 @@ describe("a rejected delivery comes back one link down the chain", () => {
     };
   }
 
-  /** What the board UI does on reopen, which has no MCP tool of its own. */
-  async function reopen(taskId: string) {
-    await world.db
-      .update(task)
-      .set({ status: "aberto", claimedByTokenId: null, claimedAt: null })
-      .where(eq(task.id, taskId));
-  }
-
-  async function newCard(title: string) {
+  it("never moves the card down a chain: there is no plan left to escalate", async () => {
+    world = await createBaseTestWorld();
     const created = await invokeTool(world.db, ctx(), "task_create", {
       project_id: world.projectId,
-      title,
+      title: "Card que volta",
       type: "bug",
       o_que: "x",
       por_que: "y",
@@ -3119,86 +3007,35 @@ describe("a rejected delivery comes back one link down the chain", () => {
       origem,
     });
     expect(created.ok).toBe(true);
-    if (!created.ok) throw new Error("card not created");
-    return TaskCreateOutputSchema.parse(created.value).task;
-  }
+    if (!created.ok) return;
+    const card = TaskCreateOutputSchema.parse(created.value).task;
 
-  it("climbs the chain once per rejected delivery and stops at the last link", async () => {
-    world = await createBaseTestWorld();
-    const card = await newCard("Card que volta");
-
-    // bug ships as fable-5 → opus-5 → gpt-5.6-sol. Only the first two are on
-    // this workspace, so the line runs out after the second try.
-    expect(card.harness?.model).toBe("fable-5");
-
-    const first = await invokeTool(world.db, ctx(), "task_claim", { task_id: card.id });
-    expect(first.ok).toBe(true);
-    if (!first.ok) return;
-    expect(TaskClaimOutputSchema.parse(first.value).task.harness?.model).toBe("fable-5");
-    await invokeTool(world.db, ctx(), "task_deliver", {
-      task_id: card.id,
-      summary: "primeira tentativa",
-    });
-
-    await reopen(card.id);
-    const second = await invokeTool(world.db, ctx(), "task_claim", { task_id: card.id });
-    expect(second.ok).toBe(true);
-    if (!second.ok) return;
-    const retried = TaskClaimOutputSchema.parse(second.value);
-    expect(retried.task.harness?.model).toBe("opus-5");
-    // And the worker is told why, plus the whole line it sits on.
-    expect(retried.briefing_markdown).toContain("fable-5 → opus-5 → gpt-5.6-sol");
-    expect(retried.briefing_markdown).toContain("tentativa 2");
-
-    await invokeTool(world.db, ctx(), "task_deliver", {
-      task_id: card.id,
-      summary: "segunda tentativa",
-    });
-    await reopen(card.id);
-    const third = await invokeTool(world.db, ctx(), "task_claim", { task_id: card.id });
-    expect(third.ok).toBe(true);
-    if (!third.ok) return;
-    // gpt-5.6-sol is the next link but no executor offers it, so the card holds
-    // at the best it can still run instead of stalling or wrapping around.
-    expect(TaskClaimOutputSchema.parse(third.value).task.harness?.model).toBe("opus-5");
-  });
-
-  it("does not escalate a pane that was merely abandoned", async () => {
-    world = await createBaseTestWorld();
-    const card = await newCard("Pane morto");
-
-    await invokeTool(world.db, ctx(), "task_claim", { task_id: card.id });
-    // force ends the open attempt as abandoned: a restart, not a verdict.
-    const again = await invokeTool(world.db, ctx(), "task_claim", {
-      task_id: card.id,
-      force: true,
-    });
-    expect(again.ok).toBe(true);
-    if (!again.ok) return;
-    expect(TaskClaimOutputSchema.parse(again.value).task.harness?.model).toBe("fable-5");
-  });
-
-  it("leaves a hand-pinned harness where the human put it", async () => {
-    world = await createBaseTestWorld();
-    const card = await newCard("Fixado na mao");
-    await invokeTool(world.db, ctx(), "task_update", {
-      task_id: card.id,
-      harness: { cli: "claude-code", model: "opus-4-8", effort: "high" },
-    });
-
-    await invokeTool(world.db, ctx(), "task_claim", { task_id: card.id });
-    await invokeTool(world.db, ctx(), "task_deliver", {
-      task_id: card.id,
-      summary: "reprovada",
-    });
-    await reopen(card.id);
-
-    const retry = await invokeTool(world.db, ctx(), "task_claim", { task_id: card.id });
-    expect(retry.ok).toBe(true);
-    if (!retry.ok) return;
-    // opus-4-8 is off the bug chain, so it was a deliberate choice. The board
-    // does not get to escalate somebody else's decision.
-    expect(TaskClaimOutputSchema.parse(retry.value).task.harness?.model).toBe("opus-4-8");
+    for (const round of [1, 2]) {
+      const claimed = await invokeTool(world.db, ctx(), "task_claim", {
+        task_id: card.id,
+        executor: { cli: "claude-code", model: "fable-5", effort: "high" },
+      });
+      expect(claimed.ok).toBe(true);
+      if (!claimed.ok) return;
+      const out = TaskClaimOutputSchema.parse(claimed.value);
+      // Round 2 comes after a rejected delivery: the record still says what
+      // the executor declared, and the briefing no longer mentions a chain.
+      expect(out.task.executor).toEqual({ cli: "claude-code", model: "fable-5", effort: "high" });
+      expect(out.briefing_markdown).not.toContain("cadeia");
+      if (round === 2) break;
+      const delivered = await invokeTool(world.db, ctx(), "task_deliver", {
+        task_id: card.id,
+        summary: "reprovada",
+      });
+      expect(delivered.ok).toBe(true);
+      const reopened = await invokeTool(world.db, ctx(), "task_reopen", {
+        task_id: card.id,
+        reason: "faltou o teste",
+      });
+      expect(reopened.ok).toBe(true);
+    }
+    const [row] = await world.db.select().from(task).where(eq(task.id, card.id));
+    expect(row?.harness).toBeNull();
   });
 });
 

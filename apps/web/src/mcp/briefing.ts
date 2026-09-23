@@ -108,14 +108,6 @@ export function renderBriefingMarkdown(input: {
   comments?: readonly TaskComment[] | null;
   /** Recipe for the CLI running the card; omitted when none could be resolved. */
   recipe?: UsageRecipe | null;
-  /**
-   * The card's line of succession and where this claim sits on it. The worker
-   * gets the whole line, not just the name it is on, so a model that cannot
-   * finish knows what to escalate to without asking the board again.
-   */
-  chain?: readonly string[] | null;
-  /** Which try this is, zero-based: 1 means the first delivery was rejected. */
-  attempt?: number;
   /** Server boundary for this attempt's transcript and usage counters. */
   claimedAt?: string | null;
   /** The previous executor stopped renewing its lease and was abandoned. */
@@ -129,8 +121,6 @@ export function renderBriefingMarkdown(input: {
     branchConvention,
     comments,
     recipe,
-    chain,
-    attempt,
     claimedAt,
     reclaimedStale,
   } = input;
@@ -138,20 +128,21 @@ export function renderBriefingMarkdown(input: {
     .map((step, index) => `${index + 1}. ${step.step} → ${step.expected}`)
     .join("\n");
 
-  const line = chain && chain.length > 1 ? chain.join(" → ") : null;
-  const harness = task.harness
+  // What the claim recorded as running this card (OCL-202). The board never
+  // plans a harness, the Overclock app chose it before the claim: this only
+  // reads back what the claim declared, so a missing effort shows up here.
+  const execution = task.executor
     ? [
-        task.harness.cli ? `- CLI: ${task.harness.cli}` : null,
-        `- modelo: ${task.harness.model}`,
-        `- effort: ${task.harness.effort}`,
-        line ? `- cadeia: ${line}` : null,
-        attempt && attempt > 0
-          ? `- tentativa ${attempt + 1}: a entrega anterior foi reprovada, então o card subiu um elo da cadeia`
-          : null,
-      ]
-        .filter(Boolean)
-        .join("\n")
-    : "- (sem harness recomendado — cardápio sem executor compatível)";
+        "## Execução registrada no claim",
+        "",
+        task.executor.cli ? `- CLI: ${task.executor.cli}` : null,
+        task.executor.model ? `- modelo: ${task.executor.model}` : null,
+        task.executor.effort
+          ? `- effort: ${task.executor.effort}`
+          : "- effort: não declarado — envie executor.effort no task_claim para o card registrar o esforço",
+        "",
+      ].filter((line): line is string => line !== null)
+    : [];
 
   const missionBlock = mission
     ? [
@@ -216,10 +207,7 @@ export function renderBriefingMarkdown(input: {
     steps || "(sem roteiro)",
     "",
     ...renderComments(comments ?? []),
-    "## Harness",
-    "",
-    harness,
-    "",
+    ...execution,
     missionBlock,
     "",
     ...(organizationBlock ? [organizationBlock, ""] : []),

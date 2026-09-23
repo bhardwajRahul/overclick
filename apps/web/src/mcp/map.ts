@@ -1,18 +1,14 @@
 import type {
-  Cardapio,
   ExecutorConfig,
-  Harness as DbHarness,
   TranscriptRef,
 } from "@agent-board/db";
 import {
-  DEFAULT_CARDAPIO,
   DEFAULT_REVIEWER,
   mergeExecutorEffortCatalog,
-  type Cardapio as McpCardapio,
+  type CardExecutor,
   type ConfirmationStep,
   type ConfiguredExecutor,
   type ConfiguredExecutorContract,
-  type Harness,
   type Mission,
   type Organization,
   type OrganizationCounts,
@@ -151,30 +147,6 @@ export function reviewerToColumns(reviewer: Reviewer | undefined): {
   };
 }
 
-export function harnessFromDb(raw: DbHarness | null | undefined): Harness | null {
-  if (!raw?.model) return null;
-  return {
-    ...(raw.cli ? { cli: raw.cli } : {}),
-    model: raw.model,
-    effort: raw.effort ?? "medium",
-  };
-}
-
-export function harnessToDb(
-  harness: {
-    cli?: string | null;
-    model: string | null;
-    effort: Harness["effort"] | null;
-  } | null,
-): DbHarness | null {
-  if (!harness) return null;
-  return {
-    cli: harness.cli ?? null,
-    model: harness.model,
-    effort: harness.effort,
-  };
-}
-
 export function mapMission(
   row: MissionRow,
   /** Name of the mission's organization: the column is not null, so one exists. */
@@ -278,7 +250,12 @@ export function mapProjectDetail(
 export function mapTask(
   row: TaskRow,
   proj: ProjectRow,
-  extras: { reopenComment?: string | null; reportsCount?: number } = {},
+  extras: {
+    reopenComment?: string | null;
+    reportsCount?: number;
+    /** What the latest claim ran on (OCL-202); omitted when not loaded. */
+    executor?: CardExecutor;
+  } = {},
 ): Task {
   const pr = row.prUrl && /^https?:\/\//.test(row.prUrl) ? row.prUrl : null;
   return {
@@ -304,7 +281,7 @@ export function mapTask(
     o_que: row.oQue,
     por_que: row.porQue,
     como_confirmo: parseComoConfirmo(row.comoConfirmo),
-    harness: harnessFromDb(row.harness),
+    ...(extras.executor ? { executor: extras.executor } : {}),
     origem: originFromDb(row.origin),
     mode: row.mode,
     branch: row.branch,
@@ -334,7 +311,6 @@ export function mapTaskForRead(value: Task): TaskRead {
     parent_id: parentId,
     supersedes,
     superseded_by: supersededBy,
-    harness,
     branch,
     pull_request_url: pullRequestUrl,
     resolved_in: resolvedIn,
@@ -356,7 +332,6 @@ export function mapTaskForRead(value: Task): TaskRead {
     ...(parentId ? { parent_id: parentId } : {}),
     ...(supersedes ? { supersedes } : {}),
     ...(supersededBy ? { superseded_by: supersededBy } : {}),
-    ...(harness ? { harness } : {}),
     ...(branch ? { branch } : {}),
     ...(pullRequestUrl ? { pull_request_url: pullRequestUrl } : {}),
     ...(resolvedIn ? { resolved_in: resolvedIn } : {}),
@@ -388,7 +363,7 @@ export function executorsFromWorkspace(
     });
 }
 
-/** Maps stored executor JSON to the complete public harness_list contract. */
+/** Maps stored executor JSON to the public executor contract (executors_update). */
 export function executorToWire(
   item: ExecutorConfig,
 ): ConfiguredExecutorContract {
@@ -409,22 +384,6 @@ export function executorToWire(
     ...(Object.keys(effortCatalog.effort_sources).length > 0
       ? { effort_sources: effortCatalog.effort_sources }
       : {}),
-  };
-}
-
-export function cardapioFromWorkspace(cardapio: Cardapio): McpCardapio {
-  const entry = (
-    stored: DbHarness | undefined,
-    fallback: McpCardapio["bug"],
-  ): McpCardapio["bug"] => ({
-    model_tier: stored?.modelTier ?? fallback.model_tier,
-    effort: stored?.effort ?? fallback.effort,
-  });
-  return {
-    ...DEFAULT_CARDAPIO,
-    bug: entry(cardapio.bug, DEFAULT_CARDAPIO.bug),
-    feature: entry(cardapio.feature, DEFAULT_CARDAPIO.feature),
-    rfc: entry(cardapio.rfc, DEFAULT_CARDAPIO.rfc),
   };
 }
 

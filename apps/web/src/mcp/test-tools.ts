@@ -15,7 +15,6 @@ const FULL_RESPONSE_WRITES = new Set<McpToolName>([
   "task_heartbeat",
   "task_update",
   "task_deliver",
-  "harness_set",
   "executors_update",
 ]);
 

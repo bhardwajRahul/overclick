@@ -28,7 +28,6 @@ function card(overrides: Partial<BoardCard>): BoardCard {
     missionId: "mission-1",
     mission: "Reliability",
     harness: null,
-    plannedCli: null,
     ranCli: "codex",
     executors: ["codex"],
     harnessChain: null,

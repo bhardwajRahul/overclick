@@ -410,24 +410,20 @@ describe("insights_query answers what the Insights page answers", () => {
     expect(full?.cost_source).toBe("computed");
     expect(out.totals.cost_usd).toBeCloseTo(0.0255);
 
-    // The price list is readable before picking a harness, with the edit
-    // marked as a human's and the untouched rows still stamped with the date
-    // the public prices were captured.
-    const listed = await invokeTool(world.db, ctx(), "harness_list", {});
-    expect(listed.ok).toBe(true);
-    if (!listed.ok) return;
-    const prices = (listed.value as { prices: Array<Record<string, unknown>> }).prices;
+    // The price list keeps the edit marked as a human's and the untouched
+    // rows still stamped with the date the public prices were captured.
+    const prices = await loadModelPrices(world.db as never, world.workspaceId);
     const sonnet = prices.find((row) => row.model === "sonnet-5");
     expect(sonnet).toMatchObject({
-      input_per_mtok: 6,
-      output_per_mtok: 30,
+      inputPerMtok: 6,
+      outputPerMtok: 30,
       source: "custom",
-      seeded_at: null,
-      updated_by: "owner@local.test",
+      seededAt: null,
+      updatedBy: "owner@local.test",
     });
     const opus = prices.find((row) => row.model === "opus-4-8");
-    expect(opus).toMatchObject({ source: "seed", input_per_mtok: 5 });
-    expect(opus?.seeded_at).toBeTruthy();
+    expect(opus).toMatchObject({ source: "seed", inputPerMtok: 5 });
+    expect(opus?.seededAt).toBeTruthy();
 
     await world.db.delete(modelPrice);
   });

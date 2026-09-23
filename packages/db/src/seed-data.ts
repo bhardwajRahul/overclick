@@ -1,14 +1,11 @@
 import {
-  DEFAULT_CARDAPIO,
   DEFAULT_ORGANIZATION_NAME,
   KNOWN_EXECUTORS,
 } from "./defaults";
-import type { Harness } from "./types";
 
 export const EXAMPLE_WORKSPACE = {
   name: "Agent Board",
   executors: KNOWN_EXECUTORS,
-  cardapio: DEFAULT_CARDAPIO,
 };
 
 export const EXAMPLE_ORGANIZATION = {
@@ -34,9 +31,4 @@ export const EXAMPLE_CARD = {
   tipo: "feature" as const,
   status: "aberto" as const,
   isExample: true,
-  harness: {
-    model: null,
-    modelTier: "mid",
-    effort: "medium",
-  } satisfies Harness,
 };

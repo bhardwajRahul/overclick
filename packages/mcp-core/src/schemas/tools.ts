@@ -2,9 +2,9 @@ import { z } from "zod";
 import {
   ArtifactSchema,
   BranchConventionSchema,
-  CardapioTaskTypeSchema,
   CardStatusSchema,
   ConfirmationStepSchema,
+  DEPRECATED_HARNESS_INPUT,
   DeliveryVerificationSchema,
   EffortSchema,
   EvidenceSchema,
@@ -44,9 +44,16 @@ import {
   WriteReturnSchema,
 } from "./common.js";
 
+/**
+ * Non-fatal notes about the request itself — today, a deprecated input the
+ * board accepted and ignored (OCL-202). Absent when there is nothing to say.
+ */
+const WarningsSchema = z.array(z.string().min(1)).min(1);
+
 const TaskWriteAckSchema = WriteAckSchema.extend({
   short_id: z.string().min(1),
   status: CardStatusSchema,
+  warnings: WarningsSchema.optional(),
 });
 
 const ProjectWriteAckSchema = WriteAckSchema.extend({
@@ -60,10 +67,6 @@ const OrganizationWriteAckSchema = WriteAckSchema.extend({
 const MissionWriteAckSchema = WriteAckSchema.extend({
   id: z.string().min(1),
   status: MissionStatusSchema,
-});
-
-const PolicyWriteAckSchema = WriteAckSchema.extend({
-  id: z.string().min(1),
 });
 
 const ExecutorsWriteAckSchema = WriteAckSchema.extend({
@@ -660,6 +663,8 @@ export const TaskListOutputSchema = z.object({
   truncated: z.boolean(),
   /** The limit the answer was cut to, whether asked for or the default. */
   limit: z.number().int(),
+  /** Present when the request used a deprecated include group. */
+  warnings: WarningsSchema.optional(),
 });
 
 const TaskIdSchema = z
@@ -776,6 +781,8 @@ export const TaskSearchHitSchema = z.object({
 
 export const TaskSearchOutputSchema = z.object({
   tasks: z.array(TaskSearchHitSchema),
+  /** Present when the request used a deprecated include group. */
+  warnings: WarningsSchema.optional(),
 });
 
 /**
@@ -804,7 +811,7 @@ export const TaskCreateInputSchema = z
     mode: ExecutionModeSchema.default("solo"),
     subtasks: z.array(SubtaskCreateSchema).optional(),
     devolve_para: ReviewerSchema.optional(),
-    harness: HarnessSchema.optional(),
+    harness: HarnessSchema.optional().describe(DEPRECATED_HARNESS_INPUT),
     origem: OrigemSchema,
     /** Mutations are compact by default; request the complete card explicitly. */
     return: WriteReturnSchema.optional(),
@@ -845,6 +852,7 @@ export const TaskCreateInputSchema = z
 export const TaskCreateFullOutputSchema = z.object({
   task: TaskSchema,
   subtasks: z.array(TaskSchema),
+  warnings: WarningsSchema.optional(),
 });
 
 export const TaskCreateOutputSchema = z.union([
@@ -852,6 +860,11 @@ export const TaskCreateOutputSchema = z.union([
   TaskCreateFullOutputSchema,
 ]);
 
+/**
+ * What is actually running the card. The board records it on the card as the
+ * harness that executed (OCL-202): cli, the exact model and the effort. Every
+ * field stays optional so an older client that never sent effort still claims.
+ */
 export const TaskClaimInputSchema = z.object({
   task_id: TaskIdSchema,
   force: z.boolean().optional(),
@@ -859,7 +872,9 @@ export const TaskClaimInputSchema = z.object({
     .object({
       cli: z.string().optional(),
       model: z.string().optional(),
-      effort: EffortSchema.optional(),
+      effort: EffortSchema.optional().describe(
+        "Reasoning effort this session actually runs with (low, medium, high, xhigh, max...). Recorded on the card with cli and model.",
+      ),
       agent: z.string().optional(),
       session_id: z.string().optional(),
     })
@@ -872,18 +887,11 @@ export const TaskClaimInputSchema = z.object({
   transcript: TranscriptRefSchema.optional(),
 }).strict();
 
-export const HarnessDivergenceSchema = z.object({
-  recommended: HarnessSchema,
-  actual: HarnessSchema.partial(),
-  warning: z.string().min(1),
-});
-
 export const TaskClaimOutputSchema = z.object({
   task: TaskSchema,
   attempt: ExecutionAttemptSchema,
   briefing_markdown: z.string(),
   branch_convention: BranchConventionSchema,
-  harness_divergence: HarnessDivergenceSchema.optional(),
   /** Recipe for the CLI that claimed, already appended to the briefing. */
   usage_recipe: UsageRecipeSchema.nullable().optional(),
   /** True when this claim replaced an expired lease rather than an open card. */
@@ -962,8 +970,7 @@ export const TaskUpdateInputSchema = z
      * workspace wide and cross projects by design.
      */
     project_id: ProjectRefSchema.optional(),
-    /** Reclassifies the card. Validated against the configured executors. */
-    harness: HarnessSchema.optional(),
+    harness: HarnessSchema.optional().describe(DEPRECATED_HARNESS_INPUT),
     /**
      * Reports or corrects usage after the fact: fills or overwrites the
      * latest attempt's usage, even on a delivered card. Real numbers found
@@ -1060,6 +1067,7 @@ export const TaskUpdateFullOutputSchema = z.object({
    * project the card is already in, because nothing was restamped.
    */
   project_move: ProjectMoveSchema.optional(),
+  warnings: WarningsSchema.optional(),
 });
 
 export const TaskUpdateOutputSchema = z.union([
@@ -1158,105 +1166,9 @@ export const BranchRegisterOutputSchema = z.object({
   task: TaskSchema,
 });
 
-export const HarnessRecommendInputSchema = z.object({
-  type: CardapioTaskTypeSchema,
-}).strict();
-
-export const HarnessRecommendOutputSchema = z.object({
-  harness: z.object({
-    cli: z.string().min(1).nullable(),
-    model: z.string().min(1).nullable(),
-    effort: EffortSchema,
-    /** Resolved account/provider, when the policy or the executor named one. */
-    account: z.string().min(1).nullable().optional(),
-  }),
-  model_tier: z.enum(["top", "mid", "cheap"]),
-  /**
-   * `"fallback"` sits between `true` and `false`: the declared chain has
-   * nothing enabled, but the board found another executor to stand in. The
-   * fallback never hides behind a plain `true` — an orchestrator has to be
-   * able to tell full policy from a plan B.
-   */
-  available: z.union([z.boolean(), z.literal("fallback")]),
-  source: z.enum(["cardapio", "explicit"]),
-  matched_executor: z
-    .object({
-      id: z.string(),
-      cli: z.string(),
-      model: z.string(),
-    })
-    .nullable(),
-  /** The declared line of succession for this activity, best first. */
-  chain: z.array(z.string().min(1)).optional(),
-  /** Where in that line the answer came from: 0 is the first choice. */
-  chain_position: z.number().int().min(0).optional(),
-  divergence: z.string().optional(),
-});
-
-export const CardapioPolicyEntrySchema = z.object({
-  type: z.string().min(1),
-  cli: z.string().min(1).nullable(),
-  model: z.string().min(1).nullable(),
-  /**
-   * The line of succession for this activity, best first, `model` included as
-   * its head. The board claims the first entry the workspace can actually run,
-   * so switching an executor off degrades the policy instead of voiding it.
-   */
-  chain: z.array(z.string().min(1)).max(8).optional(),
-  effort: EffortSchema,
-  /**
-   * Preferred account/provider for this activity, when `cli` has more than
-   * one (e.g. two Claude OAuth accounts). Optional; null/omitted means any
-   * account. Leniently validated free text — see `HarnessSchema.account`.
-   */
-  account: z.string().min(1).nullable().optional(),
-  /**
-   * Who wrote this line last and when: an email when it came from Settings,
-   * the token label when it came from harness_set. Null on a factory default
-   * nobody has touched yet.
-   */
-  updated_by: z.string().min(1).nullable().optional(),
-  updated_at: IsoDateTimeSchema.nullable().optional(),
-});
-
-/**
- * Writes one policy line. Guarded by the token's manage flag: a worker token
- * gets PERMISSION_DENIED instead of promoting itself to a better model.
- * `cli` null or omitted means no preference; the model still has to exist on
- * one of the workspace's enabled executors.
- */
-export const HarnessSetInputSchema = z
-  .object({
-    type: CardapioTaskTypeSchema,
-    cli: z.string().min(1).nullable().optional(),
-    model: z.string().min(1).optional(),
-    /**
-     * The whole line of succession for this activity, best first. Send this
-     * instead of `model` to declare a fallback: the board claims the first
-     * entry it can run. `model` alone still works and reads as a chain of one.
-     */
-    chain: z.array(z.string().min(1)).min(1).max(8).optional(),
-    effort: EffortSchema,
-    /** Preferred account/provider for this activity; null clears it. */
-    account: z.string().min(1).nullable().optional(),
-    /** Mutations are compact by default; request the complete policy explicitly. */
-    return: WriteReturnSchema.optional(),
-  }).strict()
-  .refine((input) => Boolean(input.model) || Boolean(input.chain?.length), {
-    message: "Send a model, a chain, or both.",
-    path: ["model"],
-  });
-
-export const HarnessSetFullOutputSchema = z.object({ policy: CardapioPolicyEntrySchema });
-
-export const HarnessSetOutputSchema = z.union([
-  PolicyWriteAckSchema,
-  HarnessSetFullOutputSchema,
-]);
-
 /**
  * One account/provider this executor can run under (e.g. a second Claude
- * OAuth account). `id` is the value a harness's `account` field names.
+ * OAuth account), as Overclock reports it.
  */
 export const ConfiguredAccountSchema = z.object({
   id: z.string().min(1),
@@ -1269,7 +1181,7 @@ export const ConfiguredExecutorSchema = z.object({
   id: z.string().min(1),
   label: z.string().min(1),
   enabled: z.boolean(),
-  /** Checked models: what a card harness may actually ask for. */
+  /** Checked models: what a task_claim may declare it runs on. */
   models: z.array(z.string()),
   /** Editable model list the board's selects offer for this CLI. */
   catalog: z.array(z.string()).optional(),
@@ -1280,50 +1192,16 @@ export const ConfiguredExecutorSchema = z.object({
   /**
    * Accounts/providers available for this CLI, as reported by Overclock's
    * `pane_list_providers` (e.g. two Claude OAuth accounts). Absent or empty
-   * means the board does not track accounts for this CLI: any account a
-   * harness names is accepted untouched.
+   * means the board does not track accounts for this CLI.
    */
   accounts: z.array(ConfiguredAccountSchema).optional(),
-});
-
-/**
- * One model's price, in US dollars per million tokens. `cache_per_mtok`
- * prices a cache read (the `cache_read` segment counter); `cache_write_per_mtok`
- * prices a cache write (`cache_write`) — a different rate on every provider
- * that bills a write at all. `seeded_at` is the date the public price was
- * captured, and is null on a row a human edited.
- */
-export const ModelPriceSchema = z.object({
-  model: z.string().min(1),
-  label: z.string().min(1),
-  input_per_mtok: z.number().nonnegative(),
-  output_per_mtok: z.number().nonnegative(),
-  cache_per_mtok: z.number().nonnegative(),
-  cache_write_per_mtok: z.number().nonnegative(),
-  source: z.enum(["seed", "custom"]),
-  seeded_at: z.string().nullable(),
-  updated_by: z.string().nullable(),
-  updated_at: z.string().nullable(),
-});
-
-export const HarnessListInputSchema = z.object({}).strict();
-
-export const HarnessListOutputSchema = z.object({
-  policy: z.array(CardapioPolicyEntrySchema),
-  executors: z.array(ConfiguredExecutorSchema),
-  /**
-   * The board's price table, so an orchestrator can reason about cost before
-   * it picks a harness. A model that is absent has no price on this board and
-   * its cost will only ever be what the agent reports.
-   */
-  prices: z.array(ModelPriceSchema),
 });
 
 /**
  * Adds or removes CLIs and models in the workspace executor config, in the
  * same shape the Settings grid saves. Guarded by the token's manage flag.
  * Adding models turns the CLI on unless `enabled: false` says otherwise: an
- * unchecked model is invisible to the policy selects and to card harnesses.
+ * unchecked model is refused when a task_claim declares it.
  * `remove: true` drops the whole CLI and cannot be combined with the others.
  */
 export const ExecutorsUpdateInputSchema = z
@@ -1401,11 +1279,6 @@ export const ExecutorsUpdateFullOutputSchema = z.object({
   /** Id the cli resolved to, which may differ from what was sent. */
   updated: z.string().min(1),
   removed: z.boolean(),
-  /**
-   * Policy lines left pointing at a cli/model this change took away. The write
-   * still happened; this says what to fix with harness_set.
-   */
-  policy_warnings: z.array(z.string()).optional(),
 });
 
 export const ExecutorsUpdateOutputSchema = z.union([
@@ -1640,9 +1513,6 @@ export const MCP_TOOL_NAMES = [
   "task_deliver",
   "task_delete",
   "branch_register",
-  "harness_recommend",
-  "harness_list",
-  "harness_set",
   "executors_update",
   "insights_query",
 ] as const;
@@ -1770,18 +1640,6 @@ export const toolContracts = {
     input: BranchRegisterInputSchema,
     output: BranchRegisterOutputSchema,
   },
-  harness_recommend: {
-    input: HarnessRecommendInputSchema,
-    output: HarnessRecommendOutputSchema,
-  },
-  harness_list: {
-    input: HarnessListInputSchema,
-    output: HarnessListOutputSchema,
-  },
-  harness_set: {
-    input: HarnessSetInputSchema,
-    output: HarnessSetOutputSchema,
-  },
   executors_update: {
     input: ExecutorsUpdateInputSchema,
     output: ExecutorsUpdateOutputSchema,
@@ -1823,13 +1681,8 @@ export type TaskSearchInput = z.infer<typeof TaskSearchInputSchema>;
 export type TaskSearchOutput = z.infer<typeof TaskSearchOutputSchema>;
 export type TaskSearchHit = z.infer<typeof TaskSearchHitSchema>;
 export type BranchRegisterInput = z.infer<typeof BranchRegisterInputSchema>;
-export type HarnessRecommendInput = z.infer<typeof HarnessRecommendInputSchema>;
-export type HarnessListInput = z.infer<typeof HarnessListInputSchema>;
-export type HarnessListOutput = z.infer<typeof HarnessListOutputSchema>;
-export type CardapioPolicyEntryContract = z.infer<typeof CardapioPolicyEntrySchema>;
 export type ConfiguredAccountContract = z.infer<typeof ConfiguredAccountSchema>;
 export type ConfiguredExecutorContract = z.infer<typeof ConfiguredExecutorSchema>;
-export type ModelPriceContract = z.infer<typeof ModelPriceSchema>;
 export type ExecutorsUpdateInput = z.infer<typeof ExecutorsUpdateInputSchema>;
 export type ExecutorsUpdateOutput = z.infer<typeof ExecutorsUpdateOutputSchema>;
 export type InsightsQueryInput = z.infer<typeof InsightsQueryInputSchema>;
@@ -1838,8 +1691,6 @@ export type InsightGroupContract = z.infer<typeof InsightGroupSchema>;
 export type CombinedInsightGroupContract = z.infer<typeof CombinedInsightGroupSchema>;
 export type CombinedInsightGroupSetContract = z.infer<typeof CombinedInsightGroupSetSchema>;
 export type InsightCardContract = z.infer<typeof InsightCardSchema>;
-export type HarnessSetInput = z.infer<typeof HarnessSetInputSchema>;
-export type HarnessSetOutput = z.infer<typeof HarnessSetOutputSchema>;
 export type ProjectListInput = z.infer<typeof ProjectListInputSchema>;
 export type ProjectListOutput = z.infer<typeof ProjectListOutputSchema>;
 export type ProjectGetInput = z.infer<typeof ProjectGetInputSchema>;

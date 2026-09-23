@@ -26,7 +26,7 @@ const task: Task = {
   o_que: "O login volta a autenticar.",
   por_que: "Ninguém entra.",
   como_confirmo: [{ step: "abre /login", expected: "entra na home" }],
-  harness: { cli: "claude-code", model: "sonnet-5", effort: "medium" },
+  executor: { cli: "claude-code", model: "sonnet-5", effort: "medium" },
   origem: { cli: "overclock", session_id: "sess_torre" },
   mode: "solo",
   devolve_para: { kind: "workspace_queue" },
@@ -96,7 +96,7 @@ describe("the organization block", () => {
 });
 
 describe("self-contained briefing markdown", () => {
-  it("embeds contract, harness, mission context and branch convention", () => {
+  it("embeds contract, the recorded executor, mission context and branch convention", () => {
     const convention = branchConvention(task.short_id, task.title);
     const md = renderBriefingMarkdown({ task, mission, branchConvention: convention });
 
@@ -256,8 +256,35 @@ describe("self-contained briefing markdown", () => {
     expect(firstAt).toBeGreaterThan(sectionAt);
     expect(secondAt).toBeGreaterThan(firstAt);
     expect(md.indexOf("## Comentários do card")).toBeLessThan(
-      md.indexOf("## Harness"),
+      md.indexOf("## Execução registrada no claim"),
     );
+  });
+
+  it("reads back what the claim recorded and never a planned harness (OCL-202)", () => {
+    const convention = branchConvention(task.short_id, task.title);
+    const md = renderBriefingMarkdown({ task, mission, branchConvention: convention });
+    expect(md).toContain("## Execução registrada no claim");
+    expect(md).toContain("- CLI: claude-code");
+    expect(md).toContain("- modelo: sonnet-5");
+    expect(md).toContain("- effort: medium");
+    expect(md).not.toContain("## Harness");
+    expect(md).not.toContain("cadeia");
+
+    const noEffort = renderBriefingMarkdown({
+      task: { ...task, executor: { cli: "codex", model: "gpt-5.6-sol" } },
+      mission,
+      branchConvention: convention,
+    });
+    expect(noEffort).toContain("effort: não declarado");
+
+    const { executor: _executor, ...unclaimed } = task;
+    const beforeClaim = renderBriefingMarkdown({
+      task: unclaimed,
+      mission,
+      branchConvention: convention,
+    });
+    expect(beforeClaim).not.toContain("## Execução registrada no claim");
+    expect(beforeClaim).not.toContain("## Harness");
   });
 
   it("adds no comments section when the card has none", () => {
@@ -273,7 +300,7 @@ describe("self-contained briefing markdown", () => {
     const md = renderBriefingMarkdown({
       task: {
         ...task,
-        harness: { cli: "codex", model: "gpt-5.6-sol", effort: "high" },
+        executor: { cli: "codex", model: "gpt-5.6-sol", effort: "high" },
       },
       mission,
       branchConvention: convention,

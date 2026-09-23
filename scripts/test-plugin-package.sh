@@ -35,7 +35,8 @@ done
 
 jq -e '.skills and .mcpServers and (has("hooks") | not) and (has("commands") | not)' \
   "$REPO_ROOT/plugin/.codex-plugin/plugin.json" >/dev/null
-jq -e '.skills and (.hooks | length == 6) and .commands' \
+# Five since OCL-202 took out the pre-create harness guard.
+jq -e '.skills and (.hooks | length == 5) and .commands' \
   "$REPO_ROOT/plugin/kimi.plugin.json" >/dev/null
 
 # OCL-114. The package ships NO MCP server. A `${OVERCLICK_URL}` placeholder is
@@ -58,13 +59,13 @@ fi
 # mcpServers: a registry install cannot know the instance URL, and Kimi drops an
 # unresolvable url silently.
 jq -e '(.skills | index("./plugin/skills/overclick")) and .commands == "./plugin/commands"
-  and (.hooks | length == 6)
+  and (.hooks | length == 5)
   and (.hooks | all(.command | startswith("node \"./plugin/hooks/") and endswith(".mjs\"")))
   and (has("mcpServers") | not)' \
   "$REPO_ROOT/.kimi-plugin/plugin.json" >/dev/null
 jq -e '.hooks | keys | sort == ["PostToolUse", "PreToolUse", "SessionStart", "Stop"]' \
   "$REPO_ROOT/plugin/hooks/hooks.json" >/dev/null
-jq -e '(.hooks.PostToolUse | length == 2) and (.hooks.PreToolUse | length == 2)' \
+jq -e '(.hooks.PostToolUse | length == 2) and (.hooks.PreToolUse | length == 1)' \
   "$REPO_ROOT/plugin/hooks/hooks.json" >/dev/null
 # OCL-134. A name list (Edit|Write|Bash) cannot fail closed: the hole it left on
 # Windows was PowerShell, and the next hole is whatever the next harness calls
@@ -85,9 +86,13 @@ done
 jq -e '[.hooks[][].hooks[].command]
   | all(startswith("node \"${CLAUDE_PLUGIN_ROOT}/hooks/") and endswith(".mjs\""))' \
   "$REPO_ROOT/plugin/hooks/hooks.json" >/dev/null
-for entrypoint in common claim-guard session-start stop-guard post-deliver pre-create; do
+for entrypoint in common claim-guard session-start stop-guard post-deliver; do
   test -f "$REPO_ROOT/plugin/hooks/$entrypoint.mjs"
 done
+# OCL-202: the board no longer plans a harness, so the pre-create guard that
+# checked one against harness_recommend is gone with the tool it called.
+test ! -e "$REPO_ROOT/plugin/hooks/pre-create.mjs"
+! grep -rq "pre-create" "$REPO_ROOT/plugin" "$REPO_ROOT/.kimi-plugin"
 test "$(find "$REPO_ROOT/plugin/hooks" -name '*.sh' | wc -l | tr -d ' ')" -eq 1
 test "$(find "$REPO_ROOT/plugin/commands" -name '*.md' | wc -l | tr -d ' ')" -eq 5
 test "$(find "$REPO_ROOT/plugin/skills" -name SKILL.md | wc -l | tr -d ' ')" -eq 1
@@ -536,9 +541,6 @@ for argument in "$@"; do
   previous=$argument
 done
 case "$body" in
-  *harness_recommend*)
-    printf '%s' '{"result":{"structuredContent":{"harness":{"cli":"codex","model":"model-fixture","effort":"high"}}}}'
-    ;;
   *task_list*)
     if [ "${OC_TEST_HAS_CLAIM:-1}" = "1" ]; then
       printf '%s' '{"result":{"structuredContent":{"tasks":[{"short_id":"T-1","title":"Fixture card","status":"em_execucao"}],"truncated":false}}}'
@@ -584,15 +586,7 @@ http
         return;
       }
       let body;
-      if (raw.includes("harness_recommend")) {
-        body = {
-          result: {
-            structuredContent: {
-              harness: { cli: "codex", model: "model-fixture", effort: "high" },
-            },
-          },
-        };
-      } else if (raw.includes("task_list") && (!hasClaim() || (
+      if (raw.includes("task_list") && (!hasClaim() || (
         JSON.parse(raw).params.arguments.claimed_by === "me"
         && JSON.parse(raw).params.arguments.session_id !== "session-fixture"
       ))) {
@@ -630,7 +624,6 @@ cat >"$HOOK_CONFIG" <<EOF
 url=http://127.0.0.1:$FIXTURE_PORT/mcp
 token=fixture
 enforce_stop=0
-enforce_harness=0
 enforce_claim=0
 EOF
 
@@ -661,13 +654,6 @@ printf '%s' "$stop_result" | grep -q '"decision":"block"' || {
 }
 other_stop=$(printf '%s' '{"session_id":"other-session"}' | PATH="$HOOK_PATH" OVERCLICK_CONFIG_FILE="$HOOK_CONFIG" node "$REPO_ROOT/plugin/hooks/stop-guard.mjs")
 test -z "$other_stop"
-
-sed -i.bak 's/enforce_harness=0/enforce_harness=1/' "$HOOK_CONFIG"
-matching_input='{"tool_input":{"type":"feature","harness":{"cli":"codex","model":"model-fixture","effort":"high"}}}'
-test -z "$(printf '%s' "$matching_input" | PATH="$HOOK_PATH" OVERCLICK_CONFIG_FILE="$HOOK_CONFIG" node "$REPO_ROOT/plugin/hooks/pre-create.mjs")"
-mismatched_input='{"tool_input":{"type":"feature","harness":{"cli":"codex","model":"other-model","effort":"high"}}}'
-pre_result=$(printf '%s' "$mismatched_input" | PATH="$HOOK_PATH" OVERCLICK_CONFIG_FILE="$HOOK_CONFIG" node "$REPO_ROOT/plugin/hooks/pre-create.mjs")
-printf '%s' "$pre_result" | grep -q '"decision":"block"'
 
 has_claim 0
 write_input=$(jq -nc --arg cwd "$TEST_ROOT/project" '{cwd:$cwd,session_id:"session-fixture",tool_name:"Write",tool_input:{file_path:"changed.txt",content:"fixture"}}')

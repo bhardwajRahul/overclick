@@ -1,12 +1,10 @@
 import {
   assessAttemptCost,
   canNestUnder,
-  cardapioEntry,
   checkUsageWindow,
   claimExpiresAt,
   derivePrefix,
   executionAttempt,
-  factoryCardapioPolicy,
   handoff,
   isValidPrefix,
   isClaimStale,
@@ -37,22 +35,16 @@ import {
   applyTransition,
   branchConvention,
   err,
-  effortOptionsForExecutor,
   evaluateClaim,
   isMcpCoreError,
   isTelemetryIncomplete,
   telemetryIncompleteReason,
-  lookupCardapioPolicy,
   MCP_TOOL_NAMES,
   ok,
-  policyChain,
-  recommendHarness,
   toolContracts,
-  type CardapioPolicyEntry,
-  type CardapioTaskType,
+  type CardExecutor,
   type CardStatus,
   type ContextOp,
-  type EffortLevel,
   type Harness,
   type ListInclude,
   type McpToolName,
@@ -87,7 +79,7 @@ import {
   or,
   sql,
 } from "drizzle-orm";
-import { applyExecutorUpdate, isPairInConfig } from "../lib/executors";
+import { applyExecutorUpdate } from "../lib/executors";
 import {
   computeInsights,
   costSourceNote,
@@ -125,9 +117,6 @@ import {
   emptyCardCounts,
   encodeExecutor,
   executorToWire,
-  executorsFromWorkspace,
-  harnessFromDb,
-  harnessToDb,
   iso,
   looksLikeUuid,
   emptyOrganizationCounts,
@@ -196,13 +185,12 @@ type ListLayers = {
   ids: boolean;
   refs: boolean;
   delivery: boolean;
-  harness: boolean;
 };
 
 /**
  * task_list/task_search row groups. The default row is the operational
- * minimum (short_id, title, type, status, ...); every uuid, delivery flag
- * and the planned harness ride behind one of these groups instead.
+ * minimum (short_id, title, type, status, ...); every uuid and delivery flag
+ * rides behind one of these groups instead.
  */
 function listLayers(include?: ListInclude[]): ListLayers {
   const includes = new Set(include ?? []);
@@ -211,8 +199,23 @@ function listLayers(include?: ListInclude[]): ListLayers {
     ids: all || includes.has("ids"),
     refs: all || includes.has("refs"),
     delivery: all || includes.has("delivery"),
-    harness: all || includes.has("harness"),
   };
+}
+
+/**
+ * OCL-202 took the planned harness off the card: the Overclock app decides
+ * what runs, the board records what ran. For one release the old inputs are
+ * accepted and ignored with one of these warnings instead of an error, so a
+ * caller written against the previous contract keeps working and learns why.
+ */
+const HARNESS_INPUT_IGNORED =
+  "harness was ignored: the board no longer plans a harness (OCL-202). The Overclock app decides what runs; task_claim records what ran (executor cli, model, effort) and task_get returns it as executor. This input will be refused in a later release.";
+
+const HARNESS_INCLUDE_IGNORED =
+  "include harness was ignored: cards no longer carry a planned harness (OCL-202). task_get returns the executor that ran the card.";
+
+function harnessIncludeWarnings(include?: ListInclude[]): { warnings?: string[] } {
+  return include?.includes("harness") ? { warnings: [HARNESS_INCLUDE_IGNORED] } : {};
 }
 
 /**
@@ -364,12 +367,14 @@ function taskWriteAck(
   row: TaskRow,
   changed: ChangedFields,
   updatedAt: Date | string = row.updatedAt,
+  warnings?: string[],
 ) {
   return {
     short_id: row.shortId,
     updated_at: iso(updatedAt),
     status: row.status,
     changed,
+    ...(warnings?.length ? { warnings } : {}),
   };
 }
 
@@ -406,10 +411,6 @@ function executorsWriteAck(
     removed,
     changed,
   };
-}
-
-function jsonEqual(left: unknown, right: unknown): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 export async function invokeTool(
@@ -620,19 +621,6 @@ async function dispatchTool(
       break;
     case "branch_register":
       value = await branchRegister(db, ctx, data as Parameters<typeof branchRegister>[2]);
-      break;
-    case "harness_recommend":
-      value = await harnessRecommend(
-        db,
-        ctx,
-        data as Parameters<typeof harnessRecommend>[2],
-      );
-      break;
-    case "harness_list":
-      value = await harnessList(db, ctx);
-      break;
-    case "harness_set":
-      value = await harnessSet(db, ctx, data as Parameters<typeof harnessSet>[2]);
       break;
     case "insights_query":
       value = await insightsQuery(
@@ -2743,9 +2731,9 @@ async function taskList(
                 : {}),
             }
           : {}),
-        ...(layers.harness && mapped.harness ? { harness: mapped.harness } : {}),
       };
     }),
+    ...harnessIncludeWarnings(input.include),
   };
 }
 
@@ -2946,6 +2934,7 @@ async function taskSearch(
           }
         : {}),
     })),
+    ...harnessIncludeWarnings(input.include),
   };
 }
 
@@ -3019,25 +3008,15 @@ async function taskCreate(
     parentRow = parent.row;
   }
 
-  const rec = await recommendFor(db, ctx.workspaceId, input.type, input.harness);
-  if (!rec.ok) return rec;
-
-  // A disabled executor is the owner's emergency stop: naming its model by
-  // hand is rejected, with the fallback the caller can resend instead
-  // (OCL-77). An entirely unconfigured model is left alone here; that case
-  // already has its own divergence text from recommendHarness above.
-  if (input.harness && rec.value.available === false) {
-    const rejection = await explicitHarnessRejection(
-      db,
-      ctx.workspaceId,
-      input.type,
-      input.harness,
-    );
-    if (rejection) return rejection;
-  }
+  // A card is born without a harness (OCL-202): the Overclock app decides what
+  // runs it and task_claim records what did. A caller still sending one, on
+  // the card or on a subtask, gets a warning for one release, not a refusal.
+  const warnings =
+    input.harness || input.subtasks?.some((item) => item.harness)
+      ? [HARNESS_INPUT_IGNORED]
+      : undefined;
 
   const reviewer = reviewerToColumns(input.devolve_para);
-  const harness = harnessToDb(rec.value.harness);
 
   return db.transaction(async (tx) => {
     const original = input.supersedes
@@ -3103,7 +3082,6 @@ async function taskCreate(
         status: "aberto",
         priority: input.priority ?? "media",
         ...reviewer,
-        harness,
         origin: originToDb(input.origem),
         mode: input.mode,
       })
@@ -3124,11 +3102,6 @@ async function taskCreate(
 
     const children: TaskRow[] = [];
     for (const [index, item] of subtasks.entries()) {
-      const childRec = item.harness
-        ? await recommendFor(db, ctx.workspaceId, input.type, item.harness)
-        : rec;
-      if (!childRec.ok) throw childRec.error;
-
       const [child] = await tx
         .insert(task)
         .values({
@@ -3146,7 +3119,6 @@ async function taskCreate(
           status: "aberto",
           priority: input.priority ?? "media",
           ...reviewerToColumns(item.devolve_para ?? input.devolve_para),
-          harness: harnessToDb(childRec.value.harness),
           origin: originToDb(input.origem),
           mode: "solo",
         })
@@ -3159,6 +3131,7 @@ async function taskCreate(
       return {
         task: mapTask(created, proj),
         subtasks: children.map((child) => mapTask(child, proj)),
+        ...(warnings ? { warnings } : {}),
       };
     }
 
@@ -3168,12 +3141,11 @@ async function taskCreate(
       ...(created.missionId ? { mission_id: created.missionId } : {}),
       ...(created.parentId ? { parent_id: created.parentId } : {}),
       ...(created.supersedesId ? { supersedes: created.supersedesId } : {}),
-      ...(created.harness ? { harness: harnessFromDb(created.harness) } : {}),
       ...(children.length
         ? { subtasks: children.map((child) => child.shortId) }
         : {}),
     };
-    return taskWriteAck(created, changed);
+    return taskWriteAck(created, changed, created.updatedAt, warnings);
   });
 }
 
@@ -3288,17 +3260,12 @@ async function taskClaim(
     );
     if (!evaluated.ok) return evaluated;
 
-    // A rejected delivery does not go back to the model that produced it.
-    const escalated = await escalatedHarnessForRetry(tx, ctx.workspaceId, found.row);
-    const effectiveHarness = escalated ?? found.row.harness;
-    const executor = resolveClaimExecutor(input.executor, effectiveHarness);
-    // The transcript uses the same contextual CLI as the attempt. An
-    // orchestrator calling itself "overclock" therefore resolves to the
-    // harness connection that really ran the card.
+    // What the claim declares is what the card records as having run it
+    // (OCL-202): there is no planned harness left to fill gaps from or to
+    // escalate along, the Overclock app made that choice before the claim.
+    const executor = resolveClaimExecutor(input.executor);
     const claimTranscript = transcriptRef({
-      cli:
-        normalizeClaimCli(input.transcript?.cli, effectiveHarness?.cli) ??
-        executor.cli,
+      cli: normalizeClaimCli(input.transcript?.cli) ?? executor.cli,
       sessionId: input.transcript?.session_id ?? executor.session_id,
       path: input.transcript?.path,
       resume: input.transcript?.resume,
@@ -3313,7 +3280,6 @@ async function taskClaim(
         claimedByTokenId: ctx.tokenId,
         claimedByExecutor:
           executor.cli ?? executor.agent ?? ctx.tokenLabel,
-        ...(escalated ? { harness: escalated } : {}),
       })
       .where(
         and(
@@ -3435,60 +3401,6 @@ async function taskClaim(
   );
   if (!payload || ("ok" in payload && payload.ok === false)) return payload;
 
-  const recommended = payload.task.harness;
-  const actual = claimed.value.executor;
-  const modelDiverges = Boolean(
-    recommended &&
-      actual.model &&
-      normalizeModelKey(actual.model) !== normalizeModelKey(recommended.model),
-  );
-  const effortDiverges = Boolean(
-    recommended &&
-      actual.effort &&
-      actual.effort.trim().toLowerCase() !== recommended.effort.trim().toLowerCase(),
-  );
-  const divergence =
-    recommended &&
-    (modelDiverges || effortDiverges)
-      ? {
-          recommended,
-          actual: {
-            ...(actual.cli ? { cli: actual.cli } : {}),
-            ...(actual.model ? { model: actual.model } : {}),
-            ...(actual.effort ? { effort: actual.effort } : {}),
-          },
-          warning: `Executor differs from the card harness: the card plans ${
-            recommended.model
-          } · ${recommended.effort}, the claim came with ${[
-            actual.model,
-            actual.effort,
-          ]
-            .filter(Boolean)
-            .join(" · ")}.`,
-        }
-      : undefined;
-
-  if (divergence) {
-    // The swap survives the session: the card timeline records planned vs
-    // actual automatically, whoever reads the board later sees what ran.
-    const planned = [
-      recommended?.cli ? `${recommended.cli} · ` : "",
-      recommended?.model,
-      ` · ${recommended?.effort}`,
-    ].join("");
-    const cameWith = [
-      actual.cli ? `${actual.cli} · ` : "",
-      actual.model,
-      actual.effort ? ` · ${actual.effort}` : "",
-    ].join("");
-    await db.insert(taskComment).values({
-      taskId: claimed.value.updated.id,
-      authorAgentRef: ctx.tokenLabel,
-      kind: "executor_swap",
-      body: `planned ${planned}, actual ${cameWith}`,
-    });
-  }
-
   return {
     task: payload.task,
     attempt: mapExecutionAttempt(claimed.value.attempt),
@@ -3496,7 +3408,6 @@ async function taskClaim(
     branch_convention: payload.branch_convention,
     usage_recipe: payload.usage_recipe,
     ...(claimed.value.reclaimedStale ? { reclaimed_stale: true } : {}),
-    ...(divergence ? { harness_divergence: divergence } : {}),
   };
 }
 
@@ -3586,7 +3497,9 @@ async function taskRelease(
 
     if (input.return === "full") {
       return {
-        task: mapTask(updated, found.proj),
+        task: mapTask(updated, found.proj, {
+          executor: cardExecutorFromAttempt(abandoned),
+        }),
         attempt: mapExecutionAttempt(abandoned),
       };
     }
@@ -3821,6 +3734,7 @@ async function taskUpdate(
       task: mapTask(updated, found.proj, {
         reopenComment: await latestReopenComment(db, updated),
         reportsCount: await countReports(db, updated),
+        executor: await cardExecutorFor(db, updated.id),
       }),
       usage_suspect: latestUsageGuard.suspect,
       usage_suspect_reason: latestUsageGuard.reason,
@@ -3996,33 +3910,9 @@ async function taskUpdate(
     }
   }
 
-  if (input.harness) {
-    const resolved = await resolveHarnessAgainstExecutors(
-      db,
-      ctx.workspaceId,
-      input.harness,
-    );
-    if (!resolved.ok) return resolved;
-    // A disabled executor's warning is the OCL-75 resolution; OCL-77 turns it
-    // into a rejection here too, with harness_recommend's own fallback in the
-    // error so the caller can resend in one step. Other fields on this card
-    // stay editable — this only blocks writing the harness itself.
-    if (resolved.value.warning) {
-      const rejection = await explicitHarnessRejection(
-        db,
-        ctx.workspaceId,
-        nextRow.tipo as CardapioTaskType,
-        input.harness,
-      );
-      if (rejection) return rejection;
-    }
-    const [updated] = await db
-      .update(task)
-      .set({ harness: harnessToDb(resolved.value) })
-      .where(eq(task.id, nextRow.id))
-      .returning();
-    if (updated) nextRow = updated;
-  }
+  // Reclassifying the harness is gone with the planned harness (OCL-202); the
+  // rest of this update still applies, and the caller is told why.
+  const warnings = input.harness ? [HARNESS_INPUT_IGNORED] : undefined;
   if (input.revisado === true) {
     const transition = applyTransition(
       {
@@ -4084,19 +3974,13 @@ async function taskUpdate(
   }
 
   if (input.spawn_failure) {
-    // Boot-failure trace from an orchestrator: the planned executor never
-    // started. Typed so the card detail labels it, with the planned harness
-    // captured at post time.
-    const planned = nextRow.harness
-      ? ` (planned ${[nextRow.harness.cli, nextRow.harness.model ?? nextRow.harness.modelTier]
-          .filter(Boolean)
-          .join(" · ")} · ${nextRow.harness.effort})`
-      : "";
+    // Boot-failure trace from an orchestrator: the executor it launched never
+    // started. Typed so the card detail labels it.
     await db.insert(taskComment).values({
       taskId: nextRow.id,
       authorAgentRef: ctx.tokenLabel,
       kind: "spawn_failure",
-      body: `${input.spawn_failure}${planned}`,
+      body: input.spawn_failure,
     });
   }
 
@@ -4131,9 +4015,6 @@ async function taskUpdate(
   if (found.row.revisado !== nextRow.revisado) {
     changed.revisado = nextRow.revisado;
   }
-  if (!jsonEqual(found.row.harness, nextRow.harness)) {
-    changed.harness = harnessFromDb(nextRow.harness);
-  }
   if (found.row.resolvedIn !== nextRow.resolvedIn) {
     changed.resolved_in = nextRow.resolvedIn;
   }
@@ -4151,19 +4032,21 @@ async function taskUpdate(
   if (projectMove) changed.project_move = projectMove;
 
   if (input.return !== "full") {
-    return taskWriteAck(nextRow, changed);
+    return taskWriteAck(nextRow, changed, nextRow.updatedAt, warnings);
   }
 
   return {
     task: mapTask(nextRow, proj, {
       reopenComment: await latestReopenComment(db, nextRow),
       reportsCount: await countReports(db, nextRow),
+      executor: await cardExecutorFor(db, nextRow.id),
     }),
     usage_suspect: latestUsageGuard.suspect,
     usage_suspect_reason: latestUsageGuard.reason,
     ...(usageRecorded ? { usage_recorded: true } : {}),
     ...(subtasksMoved !== null ? { subtasks_moved: subtasksMoved } : {}),
     ...(projectMove ? { project_move: projectMove } : {}),
+    ...(warnings ? { warnings } : {}),
   };
 }
 
@@ -4332,181 +4215,6 @@ async function applyUsageToLatestAttempt(
   return ok(updated ?? row);
 }
 
-/**
- * Resolves a caller-provided harness against the workspace's enabled
- * executors: the model must exist on one of them, and when a CLI is named it
- * must be that CLI. Returns the harness with the CLI filled from the match.
- */
-async function resolveHarnessAgainstExecutors(
-  db: McpDatabase,
-  workspaceId: string,
-  input: Harness,
-): Promise<
-  Result<{ cli: string | null; model: string; effort: Harness["effort"]; warning?: string }>
-> {
-  const [ws] = await db
-    .select()
-    .from(workspace)
-    .where(eq(workspace.id, workspaceId))
-    .limit(1);
-  if (!ws) {
-    return err(
-      "NOT_FOUND",
-      "The workspace for this token no longer exists. Generate a new token in the board Settings.",
-    );
-  }
-  return resolveHarnessAgainstConfig(executorsFromWorkspace(ws.executors), input, ws.executors);
-}
-
-/** A model that only exists on a switched-off executor, found for the warning path. */
-function findDisabledExecutorMatch(
-  allExecutors: readonly ExecutorConfig[] | undefined,
-  needleCli: string | undefined,
-  needleModel: string,
-): { id: string } | null {
-  if (!allExecutors) return null;
-  const disabled = allExecutors.filter((item) => !item.enabled);
-  const pool = needleCli
-    ? disabled.filter((item) => item.id.trim().toLowerCase() === needleCli)
-    : disabled;
-  for (const item of pool) {
-    if (item.models.some((model) => model.trim().toLowerCase() === needleModel)) {
-      return { id: item.id };
-    }
-  }
-  return null;
-}
-
-function disabledExecutorWarning(model: string, executorId: string): string {
-  return `Model '${model}' is configured on executor '${executorId}', which is currently disabled. The harness was saved as declared; re-enable the executor or call harness_recommend for a working alternative.`;
-}
-
-/**
- * Rejects a task_create/task_update write whose explicit harness names a
- * model that only exists on a disabled executor, instead of the OCL-75
- * warning-and-accept: the disable switch is the owner's emergency stop, so a
- * write naming its model does not get quietly saved anyway (OCL-77). The
- * error carries harness_recommend's own fallback for that activity type, so
- * the caller can resend with a working harness in one step. Returns
- * undefined when the model is not on any executor at all, disabled or not:
- * that case already has its own, more specific divergence text from
- * recommendHarness and is left alone.
- */
-async function explicitHarnessRejection(
-  db: McpDatabase,
-  workspaceId: string,
-  type: CardapioTaskType,
-  harness: Harness,
-): Promise<Result<never> | undefined> {
-  const model = harness.model?.trim();
-  if (!model) return undefined;
-  const [ws] = await db
-    .select()
-    .from(workspace)
-    .where(eq(workspace.id, workspaceId))
-    .limit(1);
-  if (!ws) return undefined;
-  const disabledMatch = findDisabledExecutorMatch(
-    ws.executors,
-    harness.cli?.trim().toLowerCase(),
-    model.toLowerCase(),
-  );
-  if (!disabledMatch) return undefined;
-  const fallback = await recommendFor(db, workspaceId, type);
-  const suggestion =
-    fallback.ok && fallback.value.harness.model
-      ? ` Fallback available: '${fallback.value.harness.model}'${
-          fallback.value.harness.cli ? ` (${fallback.value.harness.cli})` : ""
-        }.`
-      : " Call harness_recommend for a working alternative.";
-  return err(
-    "INVALID_ARGUMENT",
-    `Model '${model}' is configured on executor '${disabledMatch.id}', which is currently disabled.${suggestion} Re-enable the executor, or resend with the fallback harness.`,
-  );
-}
-
-/**
- * The same check without the round trip, for callers walking a chain: reading
- * the workspace once and testing every link against it beats one SELECT per
- * link, and the link count is the point of the feature.
- *
- * A model that lives only on a disabled executor does not fail the write: a
- * card is allowed to name a harness the workspace switched off for now, since
- * turning an executor off and on is routine and the point of a warning is to
- * say so, not to block the operator from getting back to work. `allExecutors`
- * carries the unfiltered config so this distinction is possible; callers that
- * only ever want the strict "enabled only" check (harness_set walking a
- * chain) simply omit it and keep today's behaviour.
- */
-function resolveHarnessAgainstConfig(
-  executors: ReturnType<typeof executorsFromWorkspace>,
-  input: Harness,
-  allExecutors?: readonly ExecutorConfig[],
-): Result<{ cli: string | null; model: string; effort: Harness["effort"]; warning?: string }> {
-  const needleModel = input.model.trim().toLowerCase();
-  const needleCli = input.cli?.trim().toLowerCase();
-
-  const candidates = needleCli
-    ? executors.filter(
-        (item) =>
-          item.id.trim().toLowerCase() === needleCli ||
-          item.cli.trim().toLowerCase() === needleCli,
-      )
-    : executors;
-  if (needleCli && candidates.length === 0) {
-    const disabledMatch = findDisabledExecutorMatch(allExecutors, needleCli, needleModel);
-    if (disabledMatch) {
-      return ok({
-        cli: disabledMatch.id,
-        model: input.model,
-        effort: input.effort,
-        warning: disabledExecutorWarning(input.model, disabledMatch.id),
-      });
-    }
-    return err(
-      "INVALID_ARGUMENT",
-      `CLI '${input.cli}' is not among the configured executors. Call harness_list to see them.`,
-    );
-  }
-  const matched = candidates.find((item) =>
-    item.models.some((model) => model.trim().toLowerCase() === needleModel),
-  );
-  if (!matched) {
-    const disabledMatch = findDisabledExecutorMatch(allExecutors, needleCli, needleModel);
-    if (disabledMatch) {
-      return ok({
-        cli: input.cli ?? disabledMatch.id,
-        model: input.model,
-        effort: input.effort,
-        warning: disabledExecutorWarning(input.model, disabledMatch.id),
-      });
-    }
-    return err(
-      "INVALID_ARGUMENT",
-      needleCli
-        ? `Model '${input.model}' is not configured on executor '${input.cli}'. Call harness_list to see the available models.`
-        : `Model '${input.model}' is not among the configured executors. Call harness_list to see the available models.`,
-    );
-  }
-  const options = effortOptionsForExecutor(matched, matched.models.find(
-    (model) => model.trim().toLowerCase() === needleModel,
-  ) ?? input.model);
-  if (
-    options !== undefined &&
-    !options.some((value) => value.trim().toLowerCase() === input.effort.trim().toLowerCase())
-  ) {
-    return err(
-      "INVALID_ARGUMENT",
-      `Effort '${input.effort}' is not supported by model '${input.model}'. Valid efforts: ${options.join(", ")}.`,
-    );
-  }
-  return ok({
-    cli: input.cli ?? matched.cli,
-    model: input.model,
-    effort: input.effort,
-  });
-}
-
 /** Where the shipped recipe looks for this CLI's session transcript. */
 function recipeTranscriptHint(cli: string): string {
   switch (cli) {
@@ -4649,10 +4357,7 @@ async function taskDeliver(
       const recipes = await loadUsageRecipes(tx as RecipesDb, ctx.workspaceId);
       const recipe = recipeForCli(
         recipes,
-        claimExecutor.cli ??
-          found.row.claimedByExecutor ??
-          found.row.harness?.cli ??
-          null,
+        claimExecutor.cli ?? found.row.claimedByExecutor ?? null,
       );
       const reason = input.usage.reason?.trim() ?? "";
       if (recipe?.yields === "tokens_per_model" && !reason) {
@@ -4879,7 +4584,9 @@ async function taskDeliver(
   }
 
   return {
-    task: mapTask(persisted.value.updated, persisted.value.proj),
+    task: mapTask(persisted.value.updated, persisted.value.proj, {
+      executor: await cardExecutorFor(db, persisted.value.updated.id),
+    }),
     handoff: {
       id: persisted.value.saved.id,
       task_id: persisted.value.saved.taskId,
@@ -4986,186 +4693,9 @@ async function branchRegister(
   return {
     task: mapTask(updated ?? found.row, found.proj, {
       reopenComment: await latestReopenComment(db, found.row),
+      executor: await cardExecutorFor(db, found.row.id),
     }),
   };
-}
-
-async function harnessRecommend(
-  db: McpDatabase,
-  ctx: AuthContext,
-  input: { type: CardapioTaskType },
-) {
-  const rec = await recommendFor(db, ctx.workspaceId, input.type);
-  if (!rec.ok) {
-    // Issue #71 item 2: pre-create.mjs saw an empty recommendation three
-    // times on 0.2.5 and could not say whether the call errored, answered
-    // 200 with nothing, or never arrived. The plugin fails closed either
-    // way; this line is the server half of the answer, so the next report
-    // comes with the reason attached instead of a shrug.
-    console.warn(
-      `[harness_recommend] refused type=${input.type} workspace=${ctx.workspaceId} code=${rec.error.code}: ${rec.error.message}`,
-    );
-    return rec;
-  }
-  return rec.value;
-}
-
-async function harnessList(db: McpDatabase, ctx: AuthContext) {
-  const [ws] = await db
-    .select()
-    .from(workspace)
-    .where(eq(workspace.id, ctx.workspaceId))
-    .limit(1);
-  if (!ws) {
-    return err(
-      "NOT_FOUND",
-      "The workspace for this token no longer exists. Generate a new token in the board Settings.",
-    );
-  }
-  const policy = await loadPolicy(db, ctx.workspaceId);
-  // The price table travels with the policy: an orchestrator picking a
-  // harness can weigh what each model costs before it spends anything.
-  const prices = await loadModelPrices(db as PricesDb, ctx.workspaceId);
-  return {
-    policy: policy.length > 0 ? policy : factoryCardapioPolicy(),
-    executors: ws.executors.map(executorToWire),
-    prices: prices.map((price) => ({
-      model: price.model,
-      label: price.label,
-      input_per_mtok: price.inputPerMtok,
-      output_per_mtok: price.outputPerMtok,
-      cache_per_mtok: price.cachePerMtok,
-      cache_write_per_mtok: price.cacheWritePerMtok,
-      source: price.source,
-      seeded_at: price.seededAt,
-      updated_by: price.updatedBy,
-      updated_at: price.updatedAt,
-    })),
-  };
-}
-
-/**
- * Writes one line of the harness policy. Gated on the token's manage flag:
- * the point of the flag is that a worker token cannot promote itself to a
- * better model between two claims.
- */
-/** The declared line, best first, without repeats and without blanks. */
-function declaredChain(
-  model: string | undefined,
-  chain: readonly string[] | undefined,
-): string[] {
-  const out: string[] = [];
-  for (const name of [model, ...(chain ?? [])]) {
-    const trimmed = name?.trim();
-    if (!trimmed) continue;
-    if (out.some((seen) => seen.toLowerCase() === trimmed.toLowerCase())) continue;
-    out.push(trimmed);
-  }
-  return out;
-}
-
-async function harnessSet(
-  db: McpDatabase,
-  ctx: AuthContext,
-  input: {
-    type: CardapioTaskType;
-    cli?: string | null;
-    model?: string;
-    chain?: string[];
-    effort: EffortLevel;
-    return?: "ack" | "full";
-  },
-) {
-  const denied = requireManage(ctx, "harness_set");
-  if (denied) return denied;
-
-  const chain = declaredChain(input.model, input.chain);
-  const head = chain[0];
-  if (!head) {
-    return err("INVALID_ARGUMENT", "Send a model, a chain, or both.");
-  }
-
-  const [ws] = await db
-    .select()
-    .from(workspace)
-    .where(eq(workspace.id, ctx.workspaceId))
-    .limit(1);
-  if (!ws) {
-    return err(
-      "NOT_FOUND",
-      "The workspace for this token no longer exists. Generate a new token in the board Settings.",
-    );
-  }
-  const executors = executorsFromWorkspace(ws.executors);
-
-  // A line of succession only earns its keep if at least one link can run. The
-  // head is allowed to name an executor this workspace has switched off, since
-  // surviving exactly that is why a successor was declared: the write is
-  // refused only when no link at all resolves, which is what a bare model has
-  // always done.
-  let firstAvailable: Result<unknown> | null = null;
-  let headResolution: Result<unknown> | null = null;
-  for (const [position, model] of chain.entries()) {
-    const resolved = resolveHarnessAgainstConfig(executors, {
-      ...(position === 0 && input.cli ? { cli: input.cli } : {}),
-      model,
-      effort: input.effort,
-    });
-    if (position === 0) headResolution = resolved;
-    if (resolved.ok) {
-      firstAvailable = resolved;
-      break;
-    }
-  }
-  // Reuse the head's own message so a chain of one fails exactly as before.
-  if (!firstAvailable) return headResolution as Result<never>;
-
-  // A null cli stays null: "no preference" is a real policy choice, and the
-  // executor match above already proved a link is available somewhere.
-  const cli = input.cli?.trim() || null;
-  // One model is not a chain. Storing null keeps the column meaningful and the
-  // row identical to what every pre-chain writer produced.
-  const stored = chain.length > 1 ? chain : null;
-  const updatedAt = new Date();
-
-  const [row] = await db
-    .insert(cardapioEntry)
-    .values({
-      workspaceId: ctx.workspaceId,
-      activityType: input.type,
-      cli,
-      model: head,
-      chain: stored,
-      effort: input.effort,
-      updatedBy: ctx.tokenLabel,
-      updatedAt,
-    })
-    .onConflictDoUpdate({
-      target: [cardapioEntry.workspaceId, cardapioEntry.activityType],
-      set: {
-        cli,
-        model: head,
-        chain: stored,
-        effort: input.effort,
-        updatedBy: ctx.tokenLabel,
-        updatedAt,
-      },
-    })
-    .returning();
-  if (!row) throw new Error("failed to write cardapio entry");
-
-  const policy = policyEntryFromRow(row);
-  if (input.return === "full") return { policy };
-  return rowWriteAck(
-    row.activityType,
-    row.updatedAt,
-    {
-      cli: row.cli,
-      model: row.model,
-      ...(row.chain?.length ? { chain: row.chain } : {}),
-      effort: row.effort,
-    },
-  );
 }
 
 /**
@@ -5390,24 +4920,9 @@ async function executorsUpdate(
   if (applied.removed && applied.config.length === ws.executors.length) {
     return err(
       "NOT_FOUND",
-      `Executor '${input.cli}' is not in this workspace config. Call harness_list to see the configured executors.`,
+      `Executor '${input.cli}' is not in this workspace config. The board Settings list the configured executors.`,
     );
   }
-
-  // A removal can orphan a policy line, exactly as it can from Settings. The
-  // write stands; the agent gets told what harness_set has to fix. Only what
-  // THIS call broke is reported: a board whose policy was already pointing at
-  // models it does not have would otherwise warn on every unrelated edit.
-  const policy = await loadPolicy(db, ctx.workspaceId);
-  const before = new Set(orphanedPolicyTypes(policy, ws.executors));
-  const warnings = orphanedPolicyTypes(policy, applied.config)
-    .filter((type) => !before.has(type))
-    .map((type) => {
-      const line = policy.find((row) => row.type === type);
-      return `policy line '${type}' points at ${[line?.cli, line?.model]
-        .filter(Boolean)
-        .join(" · ")}, which is no longer configured. Fix it with harness_set.`;
-    });
 
   await db
     .update(workspace)
@@ -5424,7 +4939,6 @@ async function executorsUpdate(
       executors: applied.config.map(executorToWire),
       updated: applied.targetId,
       removed: applied.removed,
-      ...(warnings.length > 0 ? { policy_warnings: warnings } : {}),
     };
   }
 
@@ -5440,39 +4954,12 @@ async function executorsUpdate(
       changed.efforts = target.efforts;
     }
   }
-  if (warnings.length > 0) changed.policy_warnings = warnings;
   return executorsWriteAck(
     applied.targetId,
     savedWorkspace?.updatedAt ?? new Date(),
     applied.removed,
     changed,
   );
-}
-
-/** Activity types whose policy model no longer exists on an enabled executor. */
-function orphanedPolicyTypes(
-  policy: CardapioPolicyEntry[],
-  config: readonly { id: string; enabled: boolean; models: string[] }[],
-): string[] {
-  const orphaned: string[] = [];
-  for (const line of policy) {
-    const chain = declaredChain(line.model ?? undefined, line.chain ?? undefined);
-    if (chain.length === 0) continue;
-    // A line is only orphaned when every link is gone. With a cli the pair has
-    // to exist on it, and only for the head: past the first choice the point of
-    // the fallback is to leave that CLI behind. Same rule recommendHarness uses.
-    const available = chain.some((model, position) =>
-      line.cli && position === 0
-        ? isPairInConfig(config, line.cli, model)
-        : config.some(
-            (row) =>
-              row.enabled &&
-              row.models.some((m) => m.trim().toLowerCase() === model.toLowerCase()),
-          ),
-    );
-    if (!available) orphaned.push(line.type);
-  }
-  return orphaned;
 }
 
 function requireManage(
@@ -5483,102 +4970,37 @@ function requireManage(
   return err("PERMISSION_DENIED", manageDenialMessage(tool, ctx.tokenLabel));
 }
 
-function policyEntryFromRow(
-  row: typeof cardapioEntry.$inferSelect,
-): CardapioPolicyEntry & { updated_by: string | null; updated_at: string } {
-  return {
-    type: row.activityType,
-    cli: row.cli,
-    model: row.model,
-    ...(row.chain && row.chain.length > 0 ? { chain: row.chain } : {}),
-    effort: row.effort as EffortLevel,
-    updated_by: row.updatedBy,
-    updated_at: iso(row.updatedAt),
-  };
-}
-
-async function loadPolicy(
-  db: McpDatabase,
-  workspaceId: string,
-): Promise<CardapioPolicyEntry[]> {
-  const rows = await db
-    .select()
-    .from(cardapioEntry)
-    .where(eq(cardapioEntry.workspaceId, workspaceId));
-  return rows.map((row) => policyEntryFromRow(row));
-}
-
-async function recommendFor(
-  db: McpDatabase,
-  workspaceId: string,
-  type: CardapioTaskType,
-  explicit?: Harness,
-  /** Which try this is, zero-based. Moves the chain walk down the line. */
-  attempt = 0,
-) {
-  const [ws] = await db
-    .select()
-    .from(workspace)
-    .where(eq(workspace.id, workspaceId))
-    .limit(1);
-  if (!ws) {
-    return err(
-      "NOT_FOUND",
-      "The workspace for this token no longer exists. Generate a new token in the board Settings.",
-    );
-  }
-  const policy = await loadPolicy(db, workspaceId);
-  return recommendHarness({
-    type,
-    executors: executorsFromWorkspace(ws.executors),
-    policy,
-    ...(attempt > 0 ? { attempt } : {}),
-    ...(explicit
-      ? {
-          explicit: {
-            model: explicit.model,
-            effort: explicit.effort,
-            ...(explicit.cli ? { cli: explicit.cli } : {}),
-          },
-        }
-      : {}),
-  });
-}
-
 /**
- * A card coming back for another try moves down its chain instead of returning
- * to the model whose delivery was just rejected.
- *
- * Only deliveries count. An attempt abandoned with `force` was a pane someone
- * killed, not a verdict on the model, and paying more for it would be a tax on
- * restarting. A harness pinned off the chain by hand is left alone: escalating
- * somebody's explicit choice is not the board's call.
+ * The harness that ran the card, as its latest claim recorded it (OCL-202):
+ * cli and effort from the claim's executor, model from the attempt (declared
+ * at claim, corrected by measured usage at delivery). Undefined before the
+ * first claim, and for an attempt that recorded nothing usable.
  */
-async function escalatedHarnessForRetry(
+function cardExecutorFromAttempt(
+  attempt: { executor: string | null; model: string | null } | undefined,
+): CardExecutor | undefined {
+  if (!attempt) return undefined;
+  const decoded = decodeExecutor(attempt.executor, attempt.model);
+  const effort = decoded.effort?.trim();
+  const value: CardExecutor = {
+    ...(decoded.cli ? { cli: decoded.cli } : {}),
+    ...(decoded.model ? { model: decoded.model } : {}),
+    ...(effort && effort.length <= 32 ? { effort } : {}),
+  };
+  return Object.keys(value).length > 0 ? value : undefined;
+}
+
+async function cardExecutorFor(
   db: McpDatabase,
-  workspaceId: string,
-  row: TaskRow,
-): Promise<ReturnType<typeof harnessToDb>> {
-  const delivered = await db
-    .select({ id: executionAttempt.id })
+  taskId: string,
+): Promise<CardExecutor | undefined> {
+  const [latest] = await db
+    .select({ executor: executionAttempt.executor, model: executionAttempt.model })
     .from(executionAttempt)
-    .where(
-      and(eq(executionAttempt.taskId, row.id), eq(executionAttempt.result, "success")),
-    );
-  if (delivered.length === 0) return null;
-
-  const policy = await loadPolicy(db, workspaceId);
-  const type = row.tipo as CardapioTaskType;
-  const chain = policyChain(lookupCardapioPolicy(policy, type));
-  const current = row.harness?.model?.trim().toLowerCase();
-  const onChain =
-    !current || chain.some((model) => model.trim().toLowerCase() === current);
-  if (!onChain) return null;
-
-  const next = await recommendFor(db, workspaceId, type, undefined, delivered.length);
-  if (!next.ok || !next.value.available) return null;
-  if (next.value.harness.model?.trim().toLowerCase() === current) return null;
-  return harnessToDb(next.value.harness);
+    .where(eq(executionAttempt.taskId, taskId))
+    .orderBy(desc(executionAttempt.startedAt))
+    .limit(1);
+  return cardExecutorFromAttempt(latest);
 }
 
 async function assembleTaskPayload(
@@ -5608,9 +5030,27 @@ async function assembleTaskPayload(
       ? reopenComment
       : await latestReopenComment(db, row);
   const count = reportsCount ?? 0;
+  const [latestAttempt] = await db
+    .select({
+      startedAt: executionAttempt.startedAt,
+      sessionId: executionAttempt.sessionId,
+      executor: executionAttempt.executor,
+      model: executionAttempt.model,
+      usageSuspect: executionAttempt.usageSuspect,
+      usageSuspectReason: executionAttempt.usageSuspectReason,
+      costUsd: executionAttempt.costUsd,
+      costSource: executionAttempt.costSource,
+      costStatus: executionAttempt.costStatus,
+      costUnpricedModels: executionAttempt.costUnpricedModels,
+    })
+    .from(executionAttempt)
+    .where(eq(executionAttempt.taskId, row.id))
+    .orderBy(desc(executionAttempt.startedAt))
+    .limit(1);
   const mapped = mapTask(row, proj, {
     reopenComment: comment,
     reportsCount: count,
+    executor: cardExecutorFromAttempt(latestAttempt),
   });
   // The business above the project. Loaded only for a briefing: every other
   // read of a card has no use for the organization markdown.
@@ -5631,51 +5071,20 @@ async function assembleTaskPayload(
   }
   const comments = wantsComments ? await listTaskComments(db, row.id) : [];
   const convention = branchConvention(mapped.short_id, mapped.title);
-  const [latestAttempt] = await db
-    .select({
-      startedAt: executionAttempt.startedAt,
-      sessionId: executionAttempt.sessionId,
-      model: executionAttempt.model,
-      usageSuspect: executionAttempt.usageSuspect,
-      usageSuspectReason: executionAttempt.usageSuspectReason,
-      costUsd: executionAttempt.costUsd,
-      costSource: executionAttempt.costSource,
-      costStatus: executionAttempt.costStatus,
-      costUnpricedModels: executionAttempt.costUnpricedModels,
-    })
-    .from(executionAttempt)
-    .where(eq(executionAttempt.taskId, row.id))
-    .orderBy(desc(executionAttempt.startedAt))
-    .limit(1);
   let recipe: ReturnType<typeof bindUsageRecipe> = null;
   if (wantsRecipe) {
     // Whoever is running the card gets the recipe for their own CLI. On a
-    // task_get without an executor, the card's claimed executor or its planned
-    // harness names the CLI; anything else lands on the generic recipe.
+    // task_get without an executor, the CLI that claimed the card names it;
+    // anything else lands on the generic recipe.
     const recipes = await loadUsageRecipes(db as RecipesDb, proj.workspaceId);
     recipe = bindUsageRecipe(
-      recipeForCli(recipes, cli ?? row.claimedByExecutor ?? row.harness?.cli ?? null),
+      recipeForCli(recipes, cli ?? row.claimedByExecutor ?? null),
       {
         sessionId: executor?.sessionId ?? latestAttempt?.sessionId,
-        model: executor?.model ?? latestAttempt?.model ?? mapped.harness?.model,
+        model: executor?.model ?? latestAttempt?.model,
         claimedAt: executor?.claimedAt ?? latestAttempt?.startedAt,
       },
     );
-  }
-  // The line of succession behind the one model the card prints, so a worker
-  // that stalls knows where the work goes next without asking the board.
-  let chain: readonly string[] = [];
-  let delivered = 0;
-  if (wantsBriefing) {
-    const policy = await loadPolicy(db, proj.workspaceId);
-    chain = policyChain(lookupCardapioPolicy(policy, row.tipo));
-    const deliveredRows = await db
-      .select({ id: executionAttempt.id })
-      .from(executionAttempt)
-      .where(
-        and(eq(executionAttempt.taskId, row.id), eq(executionAttempt.result, "success")),
-      );
-    delivered = deliveredRows.length;
   }
   const briefingMarkdown = wantsBriefing
     ? renderBriefingMarkdown({
@@ -5696,8 +5105,6 @@ async function assembleTaskPayload(
         branchConvention: convention,
         comments,
         recipe,
-        chain,
-        attempt: delivered,
         claimedAt: latestAttempt?.startedAt
           ? iso(latestAttempt.startedAt)
           : null,

@@ -24,7 +24,6 @@ import {
   type ColumnStatus,
 } from "../../lib/board-columns";
 import { pickRowNumber, typeInitial } from "../../lib/board-row";
-import { cliDiffers } from "../../lib/cli-mark";
 import { dict, type Dict } from "../../lib/i18n";
 import { CliMark } from "../../components/cli-mark";
 import { Markdown } from "../../components/markdown";
@@ -119,17 +118,18 @@ export type BoardCard = {
   projectName: string;
   missionId: string | null;
   mission: string | null;
-  /** Planned harness with its effort, for the detail panel. */
+  /**
+   * What the latest claim ran on, model and effort, for the detail panel.
+   * The board records the harness that executed; it never plans one (OCL-202).
+   */
   harness: string | null;
-  /** The CLI the card planned, for its brand mark. Null when it planned none. */
-  plannedCli: string | null;
   /** The CLI that actually claimed the card, for its brand mark. */
   ranCli: string | null;
   /** Every distinct CLI that attempted this card, including earlier reopens. */
   executors: string[];
-  /** Plan and reality in one value: "sonnet-5", or "sonnet-5 → fable-5". */
+  /** What ran in one value: "sonnet-5", or "sonnet-5 → fable-5" when the usage switched model. */
   harnessChain: string | null;
-  /** What actually ran, set only when it was not what the card planned. */
+  /** The models the usage recorded, set only when they are not what the claim declared. */
   harnessRan: string | null;
   /** Where the attempt's current model identity came from. */
   modelSource: "declared" | "harness" | "measured" | null;
@@ -357,26 +357,14 @@ function CardMetaTail({
 }
 
 /**
- * The CLI of a card, as the brand mark the app already ships (AGB-66). The
- * plan's mark leads, and when another CLI actually took the card its mark
- * follows: the same planned to actual reading the model chain has, in the
- * width a glyph costs instead of the width a word costs.
+ * The CLI that claimed the card, as the brand mark the app already ships
+ * (AGB-66): the width a glyph costs instead of the width a word costs.
  */
 function CardCli({ card }: { card: BoardCard }) {
-  const swapped = cliDiffers(card.plannedCli, card.ranCli);
-  const lead = card.plannedCli ?? card.ranCli;
-  if (!lead) return null;
+  if (!card.ranCli) return null;
   return (
     <span className="meta-cli">
-      <CliMark cli={lead} />
-      {swapped ? (
-        <>
-          <span className="meta-cli-arrow" aria-hidden="true">
-            →
-          </span>
-          <CliMark cli={card.ranCli} />
-        </>
-      ) : null}
+      <CliMark cli={card.ranCli} />
     </span>
   );
 }
@@ -597,7 +585,7 @@ function CardRow({
       ) : null}
       {/* Who ran it, in the width a glyph costs: the spelled name never fit
           this row, and the mark is read faster than the word anyway. */}
-      <CliMark cli={card.ranCli ?? card.plannedCli} />
+      <CliMark cli={card.ranCli} />
       {num ? <span className={`ml-num tel-${num.kind}`}>{num.text}</span> : null}
     </div>
   );
@@ -1241,9 +1229,9 @@ function Detail({
                 <CardCli card={card} />
                 <span>{card.harness ?? "—"}</span>
               </p>
-              {/* The board folds plan and reality into one value; here they
-                  stay apart, so the effort planned and the model that ran are
-                  both readable. */}
+              {/* The card line folds the claim and the usage into one value;
+                  here they stay apart, so the effort the claim declared and
+                  the models the usage measured are both readable. */}
               {card.harnessRan ? (
                 <p className="d-mono d-harness-ran">
                   {t.detail.harnessRan} {card.harnessRan}
