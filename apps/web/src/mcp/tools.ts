@@ -2023,25 +2023,16 @@ async function missionDelete(
   }
 
   return db.transaction(async (tx) => {
+    // Only the cards the caller may see are counted or named (OCL-227). An
+    // admin can put a card of theirs in a member's mission; refusing, or
+    // counting it, would tell the member that card exists. The mission is the
+    // member's to delete, so those cards are detached with the rest and simply
+    // end up with no mission, as `mission_id: null` would leave them.
     const [counted] = await tx
       .select({ n: count() })
       .from(task)
-      .where(eq(task.missionId, current.id));
+      .where(and(eq(task.missionId, current.id), taskScope(principalFromAuth(ctx))));
     const taskCount = Number(counted?.n ?? 0);
-
-    if (!isAdmin(principalFromAuth(ctx))) {
-      // Cards of other people in this mission are not the caller's to detach.
-      const [mine] = await tx
-        .select({ n: count() })
-        .from(task)
-        .where(and(eq(task.missionId, current.id), taskScope(principalFromAuth(ctx))));
-      if (Number(mine?.n ?? 0) !== taskCount) {
-        return err(
-          "PERMISSION_DENIED",
-          `Mission '${current.title}' holds cards that are not yours; ask an admin to delete it.`,
-        );
-      }
-    }
 
     if (taskCount > 0 && input.force !== true) {
       return err(
@@ -2050,12 +2041,10 @@ async function missionDelete(
       );
     }
 
-    if (taskCount > 0) {
-      await tx
-        .update(task)
-        .set({ missionId: null })
-        .where(eq(task.missionId, current.id));
-    }
+    await tx
+      .update(task)
+      .set({ missionId: null })
+      .where(eq(task.missionId, current.id));
     await tx
       .delete(mission)
       .where(
@@ -2887,6 +2876,7 @@ async function taskGet(
   }
   const payload = await assembleTaskPayload(
     db,
+    ctx,
     found.row,
     found.proj,
     undefined,
@@ -3335,7 +3325,7 @@ async function taskCreate(
         tx,
         original.row,
         created,
-        `superseded by ${created.shortId}`,
+        supersededNote(original.row, created),
       );
       if (!discarded.ok) return discarded;
     }
@@ -3633,6 +3623,7 @@ async function taskClaim(
 
   const payload = await assembleTaskPayload(
     db,
+    ctx,
     claimed.value.updated,
     claimed.value.proj,
     claimed.value.reopenComment,
@@ -3679,7 +3670,7 @@ async function taskRelease(
         "Only a card in execution has a claim to release. Call task_get to see its current status.",
       );
     }
-    if (found.row.claimedByTokenId !== ctx.tokenId && !ctx.canManage) {
+    if (found.row.claimedByTokenId !== ctx.tokenId && !canTakeOverClaim(ctx)) {
       return err(
         "PERMISSION_DENIED",
         "Only the token that owns this claim, or a token with manage permission, may release it.",
@@ -3775,7 +3766,7 @@ async function taskHeartbeat(
         "Only a card in execution has a claim to keep alive.",
       );
     }
-    if (found.row.claimedByTokenId !== ctx.tokenId && !ctx.canManage) {
+    if (found.row.claimedByTokenId !== ctx.tokenId && !canTakeOverClaim(ctx)) {
       return err(
         "PERMISSION_DENIED",
         "Only the token that owns this claim, or a token with manage permission, may heartbeat it.",
@@ -3939,6 +3930,11 @@ async function taskUpdate(
   }
 
   if (input.status === "validado") {
+    // Validating is the admin's (OCL-227): a member may not sign off on the
+    // card they wrote, whatever flags their token carries.
+    if (!isAdmin(principalFromAuth(ctx))) {
+      return err("PERMISSION_DENIED", "Only an admin can validate a card.");
+    }
     const validated = await db.transaction(async (tx) => {
       const current = await findTask(tx, ctx, input.task_id, true);
       if (!current) {
@@ -4073,7 +4069,7 @@ async function taskUpdate(
         original.row,
         continuation,
         input.comment?.trim() ||
-          (continuation ? `superseded by ${continuation.shortId}` : "discarded"),
+          (continuation ? supersededNote(original.row, continuation) : "discarded"),
       );
     });
     if (!discarded.ok) return discarded;
@@ -4103,11 +4099,15 @@ async function taskUpdate(
         .where(eq(task.id, nextRow.id))
         .returning();
       // task_create puts subtasks in the parent's mission. Moving the parent
-      // keeps that true instead of leaving its children behind.
+      // keeps that true instead of leaving its children behind. Only the
+      // children the caller may see follow (OCL-227): an admin's subtask under
+      // a member's card stays where the admin put it, and is never counted.
       const children = await tx
         .update(task)
         .set({ missionId })
-        .where(eq(task.parentId, nextRow.id))
+        .where(
+          and(eq(task.parentId, nextRow.id), taskScope(principalFromAuth(ctx))),
+        )
         .returning({ id: task.id });
       return { updated, children: children.length };
     });
@@ -4155,11 +4155,24 @@ async function taskUpdate(
         // Subtasks are numbered off their parent (AGB-5.1), so they follow it
         // and get restamped with it. Leaving them behind would orphan them in
         // a project their id does not belong to.
-        const children = await tx
+        const allChildren = await tx
           .select()
           .from(task)
           .where(eq(task.parentId, nextRow.id))
           .orderBy(asc(task.createdAt));
+        // A subtask the caller may not see is not theirs to move, restamp or
+        // name in the answer (OCL-227). It stays in its project under its id
+        // and is detached instead, which is what keeps the rule above: no
+        // subtask lives in a different project than its parent.
+        const principal = principalFromAuth(ctx);
+        const children = allChildren.filter((child) => canSeeTask(principal, child));
+        const hidden = allChildren.filter((child) => !canSeeTask(principal, child));
+        if (hidden.length > 0) {
+          await tx
+            .update(task)
+            .set({ parentId: null })
+            .where(inArray(task.id, hidden.map((child) => child.id)));
+        }
         for (const child of children) {
           const suffix = child.shortId.startsWith(`${previous}.`)
             ? child.shortId.slice(previous.length)
@@ -4958,10 +4971,22 @@ async function taskDelete(
     );
     }
 
-    const children = await tx
-      .select({ id: task.id })
+    const allChildren = await tx
+      .select({ id: task.id, createdByUserId: task.createdByUserId })
       .from(task)
       .where(eq(task.parentId, found.row.id));
+    // A subtask the caller may not see is someone else's card (OCL-227): an
+    // admin can open one under a member's card. It is detached before the
+    // delete, so the cascade cannot take it, and it is left out of the counts.
+    const principal = principalFromAuth(ctx);
+    const children = allChildren.filter((child) => canSeeTask(principal, child));
+    const hidden = allChildren.filter((child) => !canSeeTask(principal, child));
+    if (hidden.length > 0) {
+      await tx
+        .update(task)
+        .set({ parentId: null })
+        .where(inArray(task.id, hidden.map((child) => child.id)));
+    }
     const ids = [found.row.id, ...children.map((child) => child.id)];
 
     const [attempts] = await tx
@@ -5285,6 +5310,28 @@ function requireStructure(ctx: AuthContext, tool: string): Result<never> | null 
   );
 }
 
+/**
+ * Whether the caller may release or keep alive a claim another token holds.
+ * The same rule as `requireManage` (OCL-227): the manage flag on a member's
+ * token must not let them free, or hold on to, a claim the admin took on one
+ * of their cards.
+ */
+function canTakeOverClaim(ctx: AuthContext): boolean {
+  return ctx.canManage === true && canManageWorkspace(principalFromAuth(ctx));
+}
+
+/**
+ * The note left on the attempt a continuation cuts short. It names the
+ * continuation only when both cards have the same author (OCL-227): an admin
+ * can continue a member's card, and the member's card must not carry the id of
+ * a card they cannot see. The admin still reaches it through `superseded_by`.
+ */
+function supersededNote(original: TaskRow, continuation: TaskRow): string {
+  return original.createdByUserId === continuation.createdByUserId
+    ? `superseded by ${continuation.shortId}`
+    : "superseded by another card";
+}
+
 function requireManage(
   ctx: AuthContext,
   tool: string,
@@ -5330,6 +5377,8 @@ async function cardExecutorFor(
 
 async function assembleTaskPayload(
   db: McpDatabase,
+  /** Who is reading: the card's mission is shown only when they may see it. */
+  ctx: AuthContext,
   row: TaskRow,
   proj: ProjectRow,
   reopenComment?: string | null,
@@ -5384,7 +5433,10 @@ async function assembleTaskPayload(
     : null;
   let missionPayload = null;
   if (wantsMission && row.missionId) {
-    const miss = await findMission(db, workspaceCtx(proj.workspaceId), row.missionId);
+    // As the reader, not the workspace (OCL-227): an admin may put a member's
+    // card in one of their missions, and that mission's objective and context
+    // are still the admin's. Out of scope, the card reads as mission-less.
+    const miss = await findMission(db, ctx, row.missionId);
     if (miss) {
       const missOrg = await organizationOf(
         db,
