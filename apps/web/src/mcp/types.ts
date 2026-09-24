@@ -5,6 +5,14 @@ export type AuthContext = {
   workspaceId: string;
   tokenLabel: string;
   /**
+   * Who the token belongs to. Absent for a token no user can be traced to;
+   * the scope module gives that token no access.
+   */
+  userId?: string | null;
+  role?: "admin" | "member" | null;
+  /** The member's organization; null for admins. */
+  organizationId?: string | null;
+  /**
    * Token may change the workspace configuration (harness policy, executors).
    * Off unless the owner ticked it in Settings; absent means off.
    */

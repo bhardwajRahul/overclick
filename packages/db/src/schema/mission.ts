@@ -1,6 +1,7 @@
 import { pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { missionStatusEnum } from "./enums";
 import { organization } from "./organization";
+import { user } from "./user";
 import { workspace } from "./workspace";
 
 export const mission = pgTable("mission", {
@@ -16,6 +17,10 @@ export const mission = pgTable("mission", {
   objective: text("objective").notNull().default(""),
   context: text("context").notNull().default(""),
   status: missionStatusEnum("status").notNull().default("ativa"),
+  /** Author. Null on missions that predate authorship: only admins see those. */
+  createdByUserId: uuid("created_by_user_id").references(() => user.id, {
+    onDelete: "set null",
+  }),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),

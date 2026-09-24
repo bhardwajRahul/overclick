@@ -7,6 +7,7 @@ import {
   mission,
   organization,
   project,
+  user,
   workspace,
   type ExecutorConfig,
 } from "@agent-board/db";
@@ -25,6 +26,8 @@ export type TestWorld = {
   organizationId: string;
   projectId: string;
   missionId: string;
+  /** The admin every fixture token belongs to. */
+  adminUserId: string;
   tokenId: string;
   secret: string;
   revokedSecret: string;
@@ -124,6 +127,16 @@ export async function createTestWorld(options?: {
     .returning({ id: mission.id });
   if (!miss) throw new Error("failed to insert mission");
 
+  const [admin] = await db
+    .insert(user)
+    .values({
+      email: "admin@example.test",
+      passwordHash: "x",
+      role: "admin",
+    })
+    .returning({ id: user.id });
+  if (!admin) throw new Error("failed to insert admin");
+
   const secret = generateTokenSecret();
   const secondSecret = generateTokenSecret();
   const revokedSecret = generateTokenSecret();
@@ -132,6 +145,7 @@ export async function createTestWorld(options?: {
     .insert(mcpToken)
     .values({
       workspaceId: ws.id,
+      ownerUserId: admin.id,
       label: "test-agent",
       hash: hashToken(secret),
       tokenPrefix: secret.slice(0, 12),
@@ -143,6 +157,7 @@ export async function createTestWorld(options?: {
     .insert(mcpToken)
     .values({
       workspaceId: ws.id,
+      ownerUserId: admin.id,
       label: "second-agent",
       hash: hashToken(secondSecret),
       tokenPrefix: secondSecret.slice(0, 12),
@@ -155,6 +170,7 @@ export async function createTestWorld(options?: {
     .insert(mcpToken)
     .values({
       workspaceId: ws.id,
+      ownerUserId: admin.id,
       label: "owner-console",
       hash: hashToken(manageSecret),
       tokenPrefix: manageSecret.slice(0, 12),
@@ -167,6 +183,7 @@ export async function createTestWorld(options?: {
     .insert(mcpToken)
     .values({
       workspaceId: ws.id,
+      ownerUserId: admin.id,
       label: "revoked-agent",
       hash: hashToken(revokedSecret),
       tokenPrefix: revokedSecret.slice(0, 12),
@@ -180,6 +197,7 @@ export async function createTestWorld(options?: {
     db,
     client,
     workspaceId: ws.id,
+    adminUserId: admin.id,
     organizationId: org.id,
     projectId: proj.id,
     missionId: miss.id,

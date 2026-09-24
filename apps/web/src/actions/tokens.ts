@@ -41,6 +41,7 @@ export async function createTokenAction(
         hash: hashToken(secret),
         tokenPrefix: secret.slice(0, 12),
         canManage,
+        ownerUserId: session.userId,
         createdByUserId: session.userId,
       })
       .returning({ id: mcpToken.id });

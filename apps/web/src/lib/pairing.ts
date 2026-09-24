@@ -232,6 +232,7 @@ export async function exchangePairingCode(
         label,
         hash: hashToken(secret),
         tokenPrefix: secret.slice(0, 12),
+        ownerUserId: consumed.createdByUserId,
         createdByUserId: consumed.createdByUserId,
       })
       .returning({ id: mcpToken.id });

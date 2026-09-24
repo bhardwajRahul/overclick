@@ -1,4 +1,4 @@
-import { mcpToken } from "@agent-board/db";
+import { mcpToken, user } from "@agent-board/db";
 import type { ErrorCode } from "@agent-board/mcp-core";
 import { eq } from "drizzle-orm";
 import { hashToken, parseBearerToken } from "./token";
@@ -43,6 +43,19 @@ export async function authenticateBearer(
     return fail("TOKEN_REVOKED", "MCP token was revoked.");
   }
 
+  const [owner] = row.ownerUserId
+    ? await db
+        .select({
+          id: user.id,
+          role: user.role,
+          organizationId: user.organizationId,
+          active: user.active,
+        })
+        .from(user)
+        .where(eq(user.id, row.ownerUserId))
+        .limit(1)
+    : [];
+
   await db
     .update(mcpToken)
     .set({ lastUsedAt: new Date() })
@@ -55,6 +68,9 @@ export async function authenticateBearer(
       workspaceId: row.workspaceId,
       tokenLabel: row.label,
       canManage: row.canManage,
+      userId: owner?.id ?? null,
+      role: owner?.role ?? null,
+      organizationId: owner?.organizationId ?? null,
     },
   };
 }

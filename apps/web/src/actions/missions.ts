@@ -101,6 +101,7 @@ export async function createMissionAction(input: {
       objective: input.objective.trim(),
       context: input.context.trim(),
       status: "ativa",
+      createdByUserId: session.userId,
     })
     .returning({ id: mission.id });
   if (!created) return { ok: false, error: "Could not create the mission." };

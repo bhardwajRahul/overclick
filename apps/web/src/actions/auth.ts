@@ -65,7 +65,7 @@ export async function signupAction(
   const passwordHash = await hashPassword(password);
   const [created] = await db()
     .insert(user)
-    .values({ email, passwordHash })
+    .values({ email, passwordHash, role: "admin" })
     .returning({
       id: user.id,
       sessionVersion: user.sessionVersion,

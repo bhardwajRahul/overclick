@@ -1751,6 +1751,7 @@ async function missionCreate(
       objective,
       context,
       status: input.status ?? "ativa",
+      createdByUserId: ctx.userId ?? null,
     })
     .returning();
   if (!row) {
@@ -3215,6 +3216,7 @@ async function taskCreate(
         ...reviewer,
         origin,
         mode: input.mode,
+        createdByUserId: ctx.userId ?? null,
       })
       .returning();
     if (!created) {
@@ -3252,6 +3254,7 @@ async function taskCreate(
           ...reviewerToColumns(item.devolve_para ?? input.devolve_para),
           origin,
           mode: "solo",
+          createdByUserId: ctx.userId ?? null,
         })
         .returning();
       if (!child) throw new Error("failed to insert subtask");
