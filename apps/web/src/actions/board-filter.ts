@@ -19,19 +19,28 @@ import type { ActionResult } from "../lib/action-result";
 import { getSession } from "../lib/cookies";
 import { db } from "../lib/db";
 import { loadModelPrices } from "../lib/prices";
+import {
+  missionScope,
+  organizationScope,
+  projectScope,
+  taskScope,
+} from "../lib/scope";
+import { sessionPrincipal } from "../lib/web-scope";
 
 export async function setBoardFilterAction(
   input: BoardFilter,
 ): Promise<ActionResult> {
   const session = await getSession();
   if (!session) return { ok: false, error: "Not signed in." };
+  const principal = await sessionPrincipal(session);
+  if (!principal) return { ok: false, error: "Not signed in." };
 
   const organizationIds = [...new Set(input.organizationIds)];
   if (organizationIds.length > 0) {
     const found = await db()
       .select({ id: organization.id })
       .from(organization)
-      .where(inArray(organization.id, organizationIds));
+      .where(and(inArray(organization.id, organizationIds), organizationScope(principal)));
     if (found.length !== organizationIds.length) {
       return { ok: false, error: "Organization not found." };
     }
@@ -42,7 +51,7 @@ export async function setBoardFilterAction(
     const found = await db()
       .select({ id: project.id })
       .from(project)
-      .where(inArray(project.id, projectIds));
+      .where(and(inArray(project.id, projectIds), projectScope(principal)));
     if (found.length !== projectIds.length) {
       return { ok: false, error: "Project not found." };
     }
@@ -52,7 +61,7 @@ export async function setBoardFilterAction(
     const [miss] = await db()
       .select({ id: mission.id })
       .from(mission)
-      .where(eq(mission.id, input.missionId))
+      .where(and(eq(mission.id, input.missionId), missionScope(principal)))
       .limit(1);
     if (!miss) return { ok: false, error: "Mission not found." };
   }
@@ -79,6 +88,8 @@ export async function setBoardFilterAction(
         and(
           eq(project.workspaceId, ws.id),
           eq(task.resolvedIn, input.resolvedIn),
+          projectScope(principal),
+          taskScope(principal),
         ),
       )
       .limit(1);
@@ -114,9 +125,19 @@ export async function boardTotalsAction(
   const session = await getSession();
   if (!session) return EMPTY_BOARD_TOTALS;
 
+  const principal = await sessionPrincipal(session);
+  if (!principal) return EMPTY_BOARD_TOTALS;
+
   const ws = await db().query.workspace.findFirst();
   if (!ws) return EMPTY_BOARD_TOTALS;
 
   const prices = ws.pricingEnabled ? await loadModelPrices(db(), ws.id) : [];
-  return loadBoardTotals(db(), ws.id, ws.pricingEnabled, prices, input);
+  return loadBoardTotals(
+    db(),
+    ws.id,
+    ws.pricingEnabled,
+    prices,
+    input,
+    principal,
+  );
 }

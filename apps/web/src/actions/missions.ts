@@ -7,6 +7,8 @@ import type { ActionResult } from "../lib/action-result";
 import { getSession } from "../lib/cookies";
 import { db } from "../lib/db";
 import { planMissionAssignment } from "../lib/mission-assign";
+import { missionScope, taskScope, type Principal } from "../lib/scope";
+import { sessionPrincipal } from "../lib/web-scope";
 
 type MissionStatus = "ativa" | "pausada" | "concluida";
 
@@ -39,7 +41,11 @@ function cleanMissionTitle(value: string): string | null {
 async function resolveMissionOrganization(
   workspaceId: string,
   requested: string | null | undefined,
+  principal: Principal,
 ): Promise<string | null> {
+  // A member files missions only in their own organization, whatever the form
+  // asked for.
+  if (principal.role !== "admin") return principal.organizationId;
   if (requested) {
     const [found] = await db()
       .select({ id: organization.id })
@@ -74,6 +80,8 @@ export async function createMissionAction(input: {
 > {
   const session = await getSession();
   if (!session) return { ok: false, error: "Session expired. Sign in again." };
+  const principal = await sessionPrincipal(session);
+  if (!principal) return { ok: false, error: "Session expired. Sign in again." };
   const workspaceId = await boardWorkspaceId();
   if (!workspaceId) return { ok: false, error: "Workspace not found." };
   const title = cleanMissionTitle(input.title);
@@ -87,6 +95,7 @@ export async function createMissionAction(input: {
   const organizationId = await resolveMissionOrganization(
     workspaceId,
     input.organizationId,
+    principal,
   );
   if (!organizationId) {
     return { ok: false, error: "No organization to create the mission in." };
@@ -119,6 +128,8 @@ export async function updateMissionAction(input: {
 }): Promise<ActionResult> {
   const session = await getSession();
   if (!session) return { ok: false, error: "Session expired. Sign in again." };
+  const principal = await sessionPrincipal(session);
+  if (!principal) return { ok: false, error: "Session expired. Sign in again." };
   const workspaceId = await boardWorkspaceId();
   if (!workspaceId) return { ok: false, error: "Workspace not found." };
   const title = cleanMissionTitle(input.title);
@@ -141,6 +152,7 @@ export async function updateMissionAction(input: {
       and(
         eq(mission.id, input.missionId),
         eq(mission.workspaceId, workspaceId),
+        missionScope(principal),
       ),
     )
     .returning({ id: mission.id });
@@ -155,6 +167,8 @@ export async function deleteEmptyMissionAction(
 ): Promise<ActionResult> {
   const session = await getSession();
   if (!session) return { ok: false, error: "Session expired. Sign in again." };
+  const principal = await sessionPrincipal(session);
+  if (!principal) return { ok: false, error: "Session expired. Sign in again." };
   const workspaceId = await boardWorkspaceId();
   if (!workspaceId) return { ok: false, error: "Workspace not found." };
 
@@ -167,6 +181,7 @@ export async function deleteEmptyMissionAction(
         and(
           eq(mission.id, missionId),
           eq(mission.workspaceId, workspaceId),
+          missionScope(principal),
         ),
       )
       .limit(1);
@@ -202,6 +217,8 @@ export async function assignCardsToMissionAction(
 ): Promise<ActionResult> {
   const session = await getSession();
   if (!session) return { ok: false, error: "Session expired. Sign in again." };
+  const principal = await sessionPrincipal(session);
+  if (!principal) return { ok: false, error: "Session expired. Sign in again." };
 
   const requested = [...new Set(taskIds.filter((id) => id.trim()))];
   const rows =
@@ -211,14 +228,14 @@ export async function assignCardsToMissionAction(
           .select({ id: task.id, workspaceId: project.workspaceId })
           .from(task)
           .innerJoin(project, eq(task.projectId, project.id))
-          .where(inArray(task.id, requested));
+          .where(and(inArray(task.id, requested), taskScope(principal)));
 
   const target = missionId
     ? ((
         await db()
           .select({ id: mission.id, workspaceId: mission.workspaceId })
           .from(mission)
-          .where(eq(mission.id, missionId))
+          .where(and(eq(mission.id, missionId), missionScope(principal)))
           .limit(1)
       )[0] ?? ("missing" as const))
     : null;
@@ -238,7 +255,7 @@ export async function assignCardsToMissionAction(
   await db()
     .update(task)
     .set({ missionId: plan.missionId })
-    .where(inArray(task.parentId, plan.taskIds));
+    .where(and(inArray(task.parentId, plan.taskIds), taskScope(principal)));
 
   revalidatePath("/home");
   return { ok: true };

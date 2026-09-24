@@ -6,6 +6,8 @@ import { revalidatePath } from "next/cache";
 import type { ActionResult } from "../lib/action-result";
 import { getSession } from "../lib/cookies";
 import { db } from "../lib/db";
+import { canManageStructure } from "../lib/scope";
+import { sessionPrincipal } from "../lib/web-scope";
 import { ORGANIZATION_CONTEXT_MAX_CHARS } from "../lib/organizations";
 
 const NAME_MAX_CHARS = 200;
@@ -28,6 +30,10 @@ export async function createOrganizationAction(input: {
 > {
   const session = await getSession();
   if (!session) return { ok: false, error: "Session expired. Sign in again." };
+  // Creating, editing or deleting an organization is the admin's.
+  if (!canManageStructure(await sessionPrincipal(session))) {
+    return { ok: false, error: "Only an admin can change an organization." };
+  }
   const ws = await workspaceId();
   if (!ws) return { ok: false, error: "Workspace not found." };
 
@@ -75,6 +81,10 @@ export async function saveOrganizationAction(input: {
 }): Promise<ActionResult> {
   const session = await getSession();
   if (!session) return { ok: false, error: "Session expired. Sign in again." };
+  // Creating, editing or deleting an organization is the admin's.
+  if (!canManageStructure(await sessionPrincipal(session))) {
+    return { ok: false, error: "Only an admin can change an organization." };
+  }
   const ws = await workspaceId();
   if (!ws) return { ok: false, error: "Workspace not found." };
 
@@ -126,6 +136,10 @@ export async function deleteOrganizationAction(input: {
 }): Promise<ActionResult> {
   const session = await getSession();
   if (!session) return { ok: false, error: "Session expired. Sign in again." };
+  // Creating, editing or deleting an organization is the admin's.
+  if (!canManageStructure(await sessionPrincipal(session))) {
+    return { ok: false, error: "Only an admin can change an organization." };
+  }
   const ws = await workspaceId();
   if (!ws) return { ok: false, error: "Workspace not found." };
 

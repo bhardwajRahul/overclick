@@ -8,6 +8,7 @@ import {
   loadMissionAttemptRows,
   type InsightsDb,
 } from "./insights";
+import type { MaybePrincipal } from "./scope";
 
 /**
  * The totals for one board filter. It reads the same attempt rows the Insights
@@ -21,10 +22,12 @@ export async function loadBoardTotals(
   pricingEnabled: boolean,
   prices: readonly ModelPrice[],
   filter: BoardFilter,
+  /** Whose cards count; `undefined` counts the whole workspace. */
+  principal?: MaybePrincipal,
 ): Promise<BoardTotals> {
   const [rows, missionAttemptRows] = await Promise.all([
-    loadInsightAttemptRows(db, workspaceId),
-    loadMissionAttemptRows(db, workspaceId),
+    loadInsightAttemptRows(db, workspaceId, principal),
+    loadMissionAttemptRows(db, workspaceId, principal),
   ]);
   // Attempt rows carry the project and mission of their card, which is what
   // the board filters on, so the board's own filter narrows them unchanged.

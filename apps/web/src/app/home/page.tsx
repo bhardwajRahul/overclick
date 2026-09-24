@@ -1,5 +1,5 @@
 import { and, asc, count, desc, eq, inArray, isNotNull } from "drizzle-orm";
-import { redirect } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import {
   claimInactiveMinutes,
   harnessChain,
@@ -36,6 +36,14 @@ import {
 } from "../../lib/format";
 import { dict, type Dict } from "../../lib/i18n";
 import { loadModelPrices } from "../../lib/prices";
+import {
+  missionScope,
+  organizationScope,
+  projectScope,
+  taskScope,
+  type MaybePrincipal,
+} from "../../lib/scope";
+import { pagePrincipal } from "../../lib/web-scope";
 import {
   bindUsageRecipe,
   loadUsageRecipes,
@@ -128,10 +136,10 @@ function githubCommitUrl(
 
 type TaskRow = Awaited<ReturnType<typeof loadTasks>>[number];
 
-async function loadTasks(projectIds: string[]) {
+async function loadTasks(projectIds: string[], principal: MaybePrincipal) {
   if (projectIds.length === 0) return [];
   return db().query.task.findMany({
-    where: inArray(task.projectId, projectIds),
+    where: and(inArray(task.projectId, projectIds), taskScope(principal)),
     orderBy: asc(task.createdAt),
     with: {
       mission: { columns: { id: true, title: true } },
@@ -577,11 +585,14 @@ function toBoardCard(
 export default async function HomePage() {
   const session = await getSession();
   if (!session) redirect("/login");
+  // Everything below reads through this: a member's board is only their own
+  // cards and missions and their organization's projects.
+  const principal = await pagePrincipal(session);
 
   const ws = await db().query.workspace.findFirst();
   if (!ws) redirect("/setup");
   const projects = await db().query.project.findMany({
-    where: eq(project.workspaceId, ws.id),
+    where: and(eq(project.workspaceId, ws.id), projectScope(principal)),
     orderBy: asc(project.createdAt),
     columns: {
       id: true,
@@ -606,7 +617,11 @@ export default async function HomePage() {
         : null,
     })),
   );
-  if (projects.length === 0) redirect("/setup");
+  if (projects.length === 0) {
+    // Setup is the admin's; a member with nothing to see gets "not found".
+    if (principal.role !== "admin") notFound();
+    redirect("/setup");
+  }
 
   // Named, not creation-ordered: the filter is read as a list of businesses.
   const organizations = await db()
@@ -616,7 +631,7 @@ export default async function HomePage() {
       context: organization.context,
     })
     .from(organization)
-    .where(eq(organization.workspaceId, ws.id))
+    .where(and(eq(organization.workspaceId, ws.id), organizationScope(principal)))
     .orderBy(asc(organization.name))
     .then((rows) =>
       rows.map((row) => ({
@@ -627,7 +642,7 @@ export default async function HomePage() {
     );
 
   const missionRows = await db().query.mission.findMany({
-    where: eq(mission.workspaceId, ws.id),
+    where: and(eq(mission.workspaceId, ws.id), missionScope(principal)),
     orderBy: asc(mission.createdAt),
     columns: {
       id: true,
@@ -643,7 +658,12 @@ export default async function HomePage() {
       : await db()
           .select({ missionId: task.missionId, status: task.status, n: count() })
           .from(task)
-          .where(inArray(task.missionId, missionRows.map((item) => item.id)))
+          .where(
+            and(
+              inArray(task.missionId, missionRows.map((item) => item.id)),
+              taskScope(principal),
+            ),
+          )
           .groupBy(task.missionId, task.status);
   const missionCounts = new Map<
     string,
@@ -690,7 +710,12 @@ export default async function HomePage() {
     .from(task)
     .innerJoin(project, eq(task.projectId, project.id))
     .where(
-      and(eq(project.workspaceId, ws.id), isNotNull(task.resolvedIn)),
+      and(
+        eq(project.workspaceId, ws.id),
+        projectScope(principal),
+        taskScope(principal),
+        isNotNull(task.resolvedIn),
+      ),
     )
     .orderBy(desc(task.resolvedIn));
   // Only the values that name a release. A delivery that stamped resolved_in
@@ -720,7 +745,7 @@ export default async function HomePage() {
   // Only a live sidecar makes the banner's button do anything. Read it just
   // when there is a banner to draw.
   const updater = release ? await readUpdaterState() : null;
-  const rows = await loadTasks(projects.map((item) => item.id));
+  const rows = await loadTasks(projects.map((item) => item.id), principal);
   // Same rule as the Insights page: no money layer, no price table to read.
   const prices = ws.pricingEnabled ? await loadModelPrices(db(), ws.id) : [];
   // The same recipes the briefing hands agents, so the card's recompute
@@ -758,6 +783,7 @@ export default async function HomePage() {
     ws.pricingEnabled,
     prices,
     initialFilter,
+    principal,
   );
 
   return (

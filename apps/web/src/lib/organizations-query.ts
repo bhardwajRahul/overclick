@@ -1,4 +1,4 @@
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { mission, organization, project } from "@agent-board/db";
 import type { Database, ModelPrice } from "@agent-board/db";
 import { filterBoardCards, type BoardFilter } from "./board-filter";
@@ -11,6 +11,12 @@ import {
   type InsightAttemptRow,
   type MissionAttemptInsightRow,
 } from "./insights";
+import {
+  missionScope,
+  organizationScope as scopeOrganization,
+  projectScope,
+  type MaybePrincipal,
+} from "./scope";
 
 export type OrganizationProject = {
   id: string;
@@ -50,6 +56,8 @@ export async function loadOrganizationOverviews(
   workspaceId: string,
   pricingEnabled: boolean,
   prices: readonly ModelPrice[],
+  /** Whose view this is; `undefined` reads the whole workspace. */
+  principal?: MaybePrincipal,
 ): Promise<OrganizationOverview[]> {
   const [organizations, projects, missions, attemptRows, missionAttemptRows] =
     await Promise.all([
@@ -60,7 +68,12 @@ export async function loadOrganizationOverviews(
           context: organization.context,
         })
         .from(organization)
-        .where(eq(organization.workspaceId, workspaceId))
+        .where(
+          and(
+            eq(organization.workspaceId, workspaceId),
+            principal === undefined ? undefined : scopeOrganization(principal),
+          ),
+        )
         .orderBy(asc(organization.name)),
       db
         .select({
@@ -70,7 +83,12 @@ export async function loadOrganizationOverviews(
           organizationId: project.organizationId,
         })
         .from(project)
-        .where(eq(project.workspaceId, workspaceId))
+        .where(
+          and(
+            eq(project.workspaceId, workspaceId),
+            principal === undefined ? undefined : projectScope(principal),
+          ),
+        )
         .orderBy(asc(project.createdAt)),
       db
         .select({
@@ -80,10 +98,15 @@ export async function loadOrganizationOverviews(
           organizationId: mission.organizationId,
         })
         .from(mission)
-        .where(eq(mission.workspaceId, workspaceId))
+        .where(
+          and(
+            eq(mission.workspaceId, workspaceId),
+            principal === undefined ? undefined : missionScope(principal),
+          ),
+        )
         .orderBy(asc(mission.createdAt)),
-      loadInsightAttemptRows(db, workspaceId),
-      loadMissionAttemptRows(db, workspaceId),
+      loadInsightAttemptRows(db, workspaceId, principal),
+      loadMissionAttemptRows(db, workspaceId, principal),
     ]);
 
   return organizations.map((org) =>
