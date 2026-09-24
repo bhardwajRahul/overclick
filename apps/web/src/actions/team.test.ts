@@ -114,9 +114,9 @@ describe("invitation and team", () => {
     expect(new Date(created.expiresAt).getTime()).toBeGreaterThan(Date.now());
   });
 
-  it("step 2: opening the link and setting a password creates a member of that organization, signed in", async () => {
+  it("step 2: opening the link and setting a password creates a member of that organization, signed in, sent to install", async () => {
     const secret = await invite("func@example.test");
-    expect(await accept(secret)).toEqual({ redirectedTo: "/home" });
+    expect(await accept(secret)).toEqual({ redirectedTo: "/onboarding" });
 
     const [member] = await world.db
       .select()

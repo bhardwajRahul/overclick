@@ -118,5 +118,7 @@ export async function acceptInvitationAction(
     userId: accepted.userId,
     sessionVersion: accepted.sessionVersion,
   });
-  redirect("/home");
+  // Signed up, the member goes on to install: the plugin and the pairing that
+  // mints their own token (the owner's decision, 2026-09-24).
+  redirect("/onboarding");
 }
