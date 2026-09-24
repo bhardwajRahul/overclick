@@ -1,18 +1,19 @@
 "use server";
 
-import {
-  project,
-  task,
-  validClaimTimeoutMinutes,
-  workspace,
-} from "@agent-board/db";
+import { validClaimTimeoutMinutes, workspace } from "@agent-board/db";
 import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import type { ActionResult } from "../lib/action-result";
 import { getSession } from "../lib/cookies";
 import { db } from "../lib/db";
 import { authContextForUser } from "../lib/scope";
-import { ADMIN_ONLY, sessionCanManageWorkspace } from "../lib/web-scope";
+import {
+  ADMIN_ONLY,
+  CARD_NOT_FOUND,
+  sessionCanManageWorkspace,
+  sessionPrincipal,
+  visibleCardWorkspace,
+} from "../lib/web-scope";
 import { invokeTool } from "../mcp/tools";
 
 /** Human release from the card detail, using the same atomic path as MCP. */
@@ -20,15 +21,10 @@ export async function releaseClaimAction(taskId: string): Promise<ActionResult> 
   const session = await getSession();
   if (!session) return { ok: false, error: "Session expired. Sign in again." };
 
-  const [found] = await db()
-    .select({ workspaceId: project.workspaceId })
-    .from(task)
-    .innerJoin(project, eq(task.projectId, project.id))
-    .where(eq(task.id, taskId))
-    .limit(1);
-  if (!found) return { ok: false, error: "Card not found." };
+  const workspaceId = await visibleCardWorkspace(await sessionPrincipal(session), taskId);
+  if (!workspaceId) return { ok: false, error: CARD_NOT_FOUND };
 
-  const acting = await authContextForUser(db(), session, found.workspaceId);
+  const acting = await authContextForUser(db(), session, workspaceId);
   if (!acting) return { ok: false, error: "Session expired. Sign in again." };
   const released = await invokeTool(
     db(),
@@ -36,7 +32,11 @@ export async function releaseClaimAction(taskId: string): Promise<ActionResult> 
     "task_release",
     { task_id: taskId, reason: "released by a signed-in human from the board" },
   );
-  if (!released.ok) return { ok: false, error: released.error.message };
+  if (!released.ok) {
+    // The tool's own not-found text differs from ours; one answer only.
+    const error = released.error.code === "NOT_FOUND" ? CARD_NOT_FOUND : released.error.message;
+    return { ok: false, error };
+  }
 
   revalidatePath("/home");
   return { ok: true };

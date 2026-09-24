@@ -10,7 +10,7 @@ import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { getSession } from "../lib/cookies";
 import { db } from "../lib/db";
-import { taskScope } from "../lib/scope";
+import { isAdmin, taskScope } from "../lib/scope";
 import { sessionPrincipal } from "../lib/web-scope";
 import { parseComoConfirmo } from "../mcp/map";
 import type { ActionResult } from "../lib/action-result";
@@ -26,6 +26,9 @@ async function findScopedTask(session: { userId: string }, taskId: string) {
     where: and(eq(task.id, taskId), taskScope(principal)),
   });
 }
+
+/** What a member hears when trying to validate or desvalidate (OCL-227). */
+const VALIDATION_ADMIN_ONLY = "Only an admin can validate a card.";
 
 /**
  * Ticks or unticks one How-to-confirm step of a done card, recording who and
@@ -79,6 +82,11 @@ export async function validateTaskAction(
 
   const row = await findScopedTask(session, taskId);
   if (!row) return { ok: false, error: "Card not found." };
+  // The card is theirs, so refusing says nothing new; validating stays the
+  // admin's.
+  if (!isAdmin(await sessionPrincipal(session))) {
+    return { ok: false, error: VALIDATION_ADMIN_ONLY };
+  }
   if (!canTransition(row.status, "validado", "human")) {
     return { ok: false, error: "You can only validate a card that is in done." };
   }
@@ -114,6 +122,9 @@ export async function unvalidateTaskAction(taskId: string): Promise<ActionResult
 
   const row = await findScopedTask(session, taskId);
   if (!row) return { ok: false, error: "Card not found." };
+  if (!isAdmin(await sessionPrincipal(session))) {
+    return { ok: false, error: VALIDATION_ADMIN_ONLY };
+  }
   if (!canTransition(row.status, "feito", "human")) {
     return { ok: false, error: "You can only desvalidate a card that is validated." };
   }

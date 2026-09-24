@@ -1,9 +1,14 @@
+import { project, task } from "@agent-board/db";
+import { and, eq } from "drizzle-orm";
 import { notFound } from "next/navigation";
+import { looksLikeUuid } from "../mcp/map";
 import { getSession } from "./cookies";
 import { db } from "./db";
 import {
   canManageWorkspace,
   principalFromUserId,
+  projectScope,
+  taskScope,
   type MaybePrincipal,
 } from "./scope";
 
@@ -38,4 +43,27 @@ export async function sessionCanManageWorkspace(session: {
   userId: string;
 }): Promise<boolean> {
   return canManageWorkspace(await sessionPrincipal(session));
+}
+
+/** What an action answers for a card that does not exist or is out of scope. */
+export const CARD_NOT_FOUND = "Card not found.";
+
+/**
+ * The workspace of a card the principal may see, or null for anything else:
+ * someone else's card, an id that matches nothing, an id that is not a uuid.
+ * One answer for all three (OCL-227), so an action that looks a card up before
+ * handing it to a tool cannot tell a member which uuids exist.
+ */
+export async function visibleCardWorkspace(
+  principal: MaybePrincipal,
+  taskId: string,
+): Promise<string | null> {
+  if (!principal || !looksLikeUuid(taskId)) return null;
+  const [found] = await db()
+    .select({ workspaceId: project.workspaceId })
+    .from(task)
+    .innerJoin(project, eq(task.projectId, project.id))
+    .where(and(eq(task.id, taskId), projectScope(principal), taskScope(principal)))
+    .limit(1);
+  return found?.workspaceId ?? null;
 }

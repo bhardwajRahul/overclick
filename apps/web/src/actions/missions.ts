@@ -187,10 +187,13 @@ export async function deleteEmptyMissionAction(
       .limit(1);
     if (!current) return { ok: false, error: "Mission not found." } as const;
 
+    // Only the cards the user may see count (OCL-227): an admin's card in a
+    // member's mission is not the member's to know about. A mission that is
+    // empty to them is deleted, and any such card is left with no mission.
     const [cards] = await tx
       .select({ n: count() })
       .from(task)
-      .where(eq(task.missionId, current.id));
+      .where(and(eq(task.missionId, current.id), taskScope(principal)));
     const taskCount = Number(cards?.n ?? 0);
     if (taskCount > 0) {
       return {
@@ -199,6 +202,7 @@ export async function deleteEmptyMissionAction(
       } as const;
     }
 
+    await tx.update(task).set({ missionId: null }).where(eq(task.missionId, current.id));
     await tx.delete(mission).where(eq(mission.id, current.id));
     revalidatePath("/home");
     return { ok: true } as const;
