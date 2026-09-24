@@ -6,7 +6,7 @@ import {
   user,
   workspace,
 } from "@agent-board/db";
-import { closeTestWorld, createTestWorld, type TestWorld } from "../mcp/test-db";
+import { closeTestWorld, createTestWorld, type TestWorld, adminPrincipal } from "../mcp/test-db";
 import {
   computeInsights,
   loadInsightAttemptRows,
@@ -111,7 +111,7 @@ describe("insights queries", () => {
   });
 
   it("joins attempts to card, project and mission for the workspace", async () => {
-    const rows = await loadInsightAttemptRows(world.db, world.workspaceId);
+    const rows = await loadInsightAttemptRows(world.db, world.workspaceId, adminPrincipal(world));
     expect(rows).toHaveLength(3);
 
     const rowA = rows.find((r) => r.taskId === taskAId && r.finishedAt);
@@ -128,7 +128,7 @@ describe("insights queries", () => {
   });
 
   it("returns only human comments as reopen signals", async () => {
-    const reopens = await loadReopenRows(world.db, world.workspaceId);
+    const reopens = await loadReopenRows(world.db, world.workspaceId, adminPrincipal(world));
     expect(reopens).toHaveLength(1);
     expect(reopens[0]?.taskId).toBe(taskBId);
   });
@@ -139,14 +139,14 @@ describe("insights queries", () => {
       .values({ name: "Elsewhere" })
       .returning({ id: workspace.id });
     if (!otherWs) throw new Error("failed to insert workspace");
-    const rows = await loadInsightAttemptRows(world.db, otherWs.id);
+    const rows = await loadInsightAttemptRows(world.db, otherWs.id, adminPrincipal(world));
     expect(rows).toHaveLength(0);
   });
 
   it("feeds computeInsights with totals that match the seeded numbers", async () => {
     const [rows, reopens] = await Promise.all([
-      loadInsightAttemptRows(world.db, world.workspaceId),
-      loadReopenRows(world.db, world.workspaceId),
+      loadInsightAttemptRows(world.db, world.workspaceId, adminPrincipal(world)),
+      loadReopenRows(world.db, world.workspaceId, adminPrincipal(world)),
     ]);
     const insights = computeInsights(rows, reopens);
 

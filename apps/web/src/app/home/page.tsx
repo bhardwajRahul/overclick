@@ -1,5 +1,5 @@
 import { and, asc, count, desc, eq, inArray, isNotNull } from "drizzle-orm";
-import { notFound, redirect } from "next/navigation";
+import { redirect } from "next/navigation";
 import {
   claimInactiveMinutes,
   harnessChain,
@@ -26,6 +26,7 @@ import {
   releaseValueOptions,
   resolveBoardFilter,
 } from "../../lib/board-filter";
+import { loadBoardTasks } from "../../lib/board-tasks";
 import { loadBoardTotals } from "../../lib/board-totals-query";
 import { getSession } from "../../lib/cookies";
 import { db } from "../../lib/db";
@@ -139,22 +140,7 @@ function githubCommitUrl(
 type TaskRow = Awaited<ReturnType<typeof loadTasks>>[number];
 
 async function loadTasks(projectIds: string[], principal: MaybePrincipal) {
-  if (projectIds.length === 0) return [];
-  return db().query.task.findMany({
-    where: and(inArray(task.projectId, projectIds), taskScope(principal)),
-    orderBy: asc(task.createdAt),
-    with: {
-      mission: { columns: { id: true, title: true } },
-      project: { columns: { name: true, repoUrl: true, organizationId: true } },
-      createdBy: { columns: { email: true } },
-      reviewer: { columns: { email: true } },
-      attempts: true,
-      handoffs: true,
-      comments: true,
-      supersedes: { columns: { id: true, shortId: true } },
-      supersededBy: { columns: { id: true, shortId: true } },
-    },
-  });
+  return loadBoardTasks(db(), projectIds, principal);
 }
 
 /**
@@ -619,11 +605,9 @@ export default async function HomePage() {
         : null,
     })),
   );
-  if (projects.length === 0) {
-    // Setup is the admin's; a member with nothing to see gets "not found".
-    if (principal.role !== "admin") notFound();
-    redirect("/setup");
-  }
+  // Setup is the admin's. A member whose organization has no project yet is
+  // not lost (OCL-227): they get their board, empty, like any new member.
+  if (projects.length === 0 && principal.role === "admin") redirect("/setup");
 
   // Named, not creation-ordered: the filter is read as a list of businesses.
   const organizations = await db()

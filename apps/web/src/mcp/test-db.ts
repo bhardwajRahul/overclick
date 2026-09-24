@@ -212,6 +212,11 @@ export async function createTestWorld(options?: {
   };
 }
 
+/** The world's admin as a scope principal: sees the whole workspace. */
+export function adminPrincipal(world: TestWorld) {
+  return { userId: world.adminUserId, role: "admin" as const, organizationId: null };
+}
+
 export async function closeTestWorld(world: TestWorld): Promise<void> {
   await world.client.close();
 }

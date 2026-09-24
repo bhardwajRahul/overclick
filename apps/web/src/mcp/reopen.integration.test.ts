@@ -3,7 +3,7 @@ import { TaskClaimOutputSchema, TaskCreateFullOutputSchema, TaskGetOutputSchema 
 import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadReopenRows } from "../lib/insights";
-import { closeTestWorld, createTestWorld, type TestWorld } from "./test-db";
+import { closeTestWorld, createTestWorld, type TestWorld, adminPrincipal } from "./test-db";
 import { invokeToolForTests as invokeTool } from "./test-tools";
 
 describe("MCP rejection and reclaim (OCL-187)", () => {
@@ -43,14 +43,14 @@ describe("MCP rejection and reclaim (OCL-187)", () => {
     expect(previous).toHaveLength(1);
     expect(previous[0]?.result).toBe("success");
     expect(previous[0]?.finishedAt).not.toBeNull();
-    expect(await loadReopenRows(world.db, world.workspaceId)).toHaveLength(1);
+    expect(await loadReopenRows(world.db, world.workspaceId, adminPrincipal(world))).toHaveLength(1);
 
     // An ordinary report must not overwrite the actual rejection reason.
     await invokeTool(world.db, ctx(), "task_update", { task_id: card.id, comment_kind: "report", comment: "Unrelated progress" });
     const got = await invokeTool(world.db, ctx(), "task_get", { task_id: card.id });
     expect(got.ok && TaskGetOutputSchema.parse(got.value).task.reopen_comment).toBe(reason);
     expect(got.ok && TaskGetOutputSchema.parse(got.value).task.reports_count).toBe(2);
-    expect(await loadReopenRows(world.db, world.workspaceId)).toHaveLength(1);
+    expect(await loadReopenRows(world.db, world.workspaceId, adminPrincipal(world))).toHaveLength(1);
     const claimed = await invokeTool(world.db, { ...ctx(), tokenId: world.secondTokenId }, "task_claim", { task_id: card.id });
     expect(claimed.ok).toBe(true);
     if (claimed.ok) expect(TaskClaimOutputSchema.parse(claimed.value).briefing_markdown).toContain(reason);

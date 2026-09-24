@@ -100,17 +100,19 @@ export type ReopenRow = {
   createdAt: Date;
 };
 
-/** Every execution attempt in the workspace, joined to its card, project and mission. */
 /**
- * `undefined` reads the whole workspace (the web page, until it is scoped);
- * a principal, or null for "nobody", narrows to what that person may see.
+ * Whose rows these are. Required, and never "the whole workspace" by
+ * omission (OCL-227): an admin principal already sees everything, and null
+ * (nobody identifiable) sees nothing.
  */
-type ScopeArg = MaybePrincipal | undefined;
+type ScopeArg = MaybePrincipal;
+
+/** Every execution attempt in the workspace, joined to its card, project and mission. */
 
 export async function loadInsightAttemptRows(
   db: InsightsDb,
   workspaceId: string,
-  principal?: ScopeArg,
+  principal: ScopeArg,
 ): Promise<InsightAttemptRow[]> {
   return db
     .select({
@@ -125,7 +127,9 @@ export async function loadInsightAttemptRows(
       organizationId: project.organizationId,
       projectId: project.id,
       projectName: project.name,
-      missionId: task.missionId,
+      // From the joined mission, not the card: a mission the reader may not
+      // see joins nothing, so neither its id nor its title comes along.
+      missionId: mission.id,
       missionTitle: mission.title,
       resolvedIn: task.resolvedIn,
       model: executionAttempt.model,
@@ -152,12 +156,14 @@ export async function loadInsightAttemptRows(
     .from(executionAttempt)
     .innerJoin(task, eq(executionAttempt.taskId, task.id))
     .innerJoin(project, eq(task.projectId, project.id))
-    .leftJoin(mission, eq(task.missionId, mission.id))
+    // An admin can put a member's card in one of their missions (OCL-227); the
+    // member's rows then read as mission-less instead of carrying its title.
+    .leftJoin(mission, and(eq(task.missionId, mission.id), missionScope(principal)))
     .where(
       and(
         eq(project.workspaceId, workspaceId),
-        principal === undefined ? undefined : projectScope(principal),
-        principal === undefined ? undefined : taskScope(principal),
+        projectScope(principal),
+        taskScope(principal),
       ),
     );
 }
@@ -174,7 +180,7 @@ type MissionAttemptTable = Record<string, any>;
 export async function loadMissionAttemptRows(
   db: InsightsDb,
   workspaceId: string,
-  principal?: ScopeArg,
+  principal: ScopeArg,
 ): Promise<MissionAttemptInsightRow[]> {
   const missionAttempt = (
     BoardDb as unknown as { missionAttempt?: MissionAttemptTable }
@@ -217,7 +223,7 @@ export async function loadMissionAttemptRows(
     .where(
       and(
         eq(mission.workspaceId, workspaceId),
-        principal === undefined ? undefined : missionScope(principal),
+        missionScope(principal),
       ),
     );
 
@@ -276,7 +282,7 @@ export function filterMissionAttempts<
 export async function loadReopenRows(
   db: InsightsDb,
   workspaceId: string,
-  principal?: ScopeArg,
+  principal: ScopeArg,
 ): Promise<ReopenRow[]> {
   return db
     .select({
@@ -289,8 +295,8 @@ export async function loadReopenRows(
     .where(
       and(
         eq(project.workspaceId, workspaceId),
-        principal === undefined ? undefined : projectScope(principal),
-        principal === undefined ? undefined : taskScope(principal),
+        projectScope(principal),
+        taskScope(principal),
         or(isNotNull(taskComment.authorUserId), eq(taskComment.reopens, true)),
       ),
     );

@@ -15,7 +15,7 @@ import {
   loadReopenRows,
 } from "../lib/insights";
 import { loadModelPrices } from "../lib/prices";
-import { closeTestWorld, createTestWorld, type TestWorld } from "./test-db";
+import { closeTestWorld, createTestWorld, type TestWorld, adminPrincipal } from "./test-db";
 import { invokeToolForTests as invokeTool } from "./test-tools";
 
 /**
@@ -39,8 +39,8 @@ describe("insights_query answers what the Insights page answers", () => {
 
   async function pageInsights() {
     const [rows, reopens, prices] = await Promise.all([
-      loadInsightAttemptRows(world.db, world.workspaceId),
-      loadReopenRows(world.db, world.workspaceId),
+      loadInsightAttemptRows(world.db, world.workspaceId, adminPrincipal(world)),
+      loadReopenRows(world.db, world.workspaceId, adminPrincipal(world)),
       loadModelPrices(world.db, world.workspaceId),
     ]);
     return computeInsights(rows, reopens, prices);

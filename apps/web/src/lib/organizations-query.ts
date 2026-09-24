@@ -56,8 +56,11 @@ export async function loadOrganizationOverviews(
   workspaceId: string,
   pricingEnabled: boolean,
   prices: readonly ModelPrice[],
-  /** Whose view this is; `undefined` reads the whole workspace. */
-  principal?: MaybePrincipal,
+  /**
+   * Whose view this is. Required (OCL-227): an admin sees the whole workspace,
+   * and null (nobody identifiable) sees nothing, never everything.
+   */
+  principal: MaybePrincipal,
 ): Promise<OrganizationOverview[]> {
   const [organizations, projects, missions, attemptRows, missionAttemptRows] =
     await Promise.all([
@@ -71,7 +74,7 @@ export async function loadOrganizationOverviews(
         .where(
           and(
             eq(organization.workspaceId, workspaceId),
-            principal === undefined ? undefined : scopeOrganization(principal),
+            scopeOrganization(principal),
           ),
         )
         .orderBy(asc(organization.name)),
@@ -86,7 +89,7 @@ export async function loadOrganizationOverviews(
         .where(
           and(
             eq(project.workspaceId, workspaceId),
-            principal === undefined ? undefined : projectScope(principal),
+            projectScope(principal),
           ),
         )
         .orderBy(asc(project.createdAt)),
@@ -101,7 +104,7 @@ export async function loadOrganizationOverviews(
         .where(
           and(
             eq(mission.workspaceId, workspaceId),
-            principal === undefined ? undefined : missionScope(principal),
+            missionScope(principal),
           ),
         )
         .orderBy(asc(mission.createdAt)),

@@ -22,8 +22,8 @@ export async function loadBoardTotals(
   pricingEnabled: boolean,
   prices: readonly ModelPrice[],
   filter: BoardFilter,
-  /** Whose cards count; `undefined` counts the whole workspace. */
-  principal?: MaybePrincipal,
+  /** Whose cards count; null (nobody identifiable) counts nothing. */
+  principal: MaybePrincipal,
 ): Promise<BoardTotals> {
   const [rows, missionAttemptRows] = await Promise.all([
     loadInsightAttemptRows(db, workspaceId, principal),
