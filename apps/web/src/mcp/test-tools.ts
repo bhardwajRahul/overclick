@@ -1,4 +1,6 @@
 import type { McpToolName } from "@agent-board/mcp-core";
+import { user } from "@agent-board/db";
+import { eq } from "drizzle-orm";
 import { invokeTool as invokeMcpTool } from "./tools";
 import type { AuthContext, McpDatabase } from "./types";
 
@@ -18,12 +20,32 @@ const FULL_RESPONSE_WRITES = new Set<McpToolName>([
   "executors_update",
 ]);
 
-export function invokeToolForTests(
+/**
+ * The scope module gives a token with no owner no access. The older fixtures
+ * hand-build a context without one and mean "the workspace admin", so this
+ * helper (never production code) fills that in; a context that names its
+ * userId, even as null, is passed through untouched.
+ */
+async function withLegacyAdmin(
+  db: McpDatabase,
+  ctx: AuthContext,
+): Promise<AuthContext> {
+  if ("userId" in ctx) return ctx;
+  const [admin] = await db
+    .select({ id: user.id })
+    .from(user)
+    .where(eq(user.role, "admin"))
+    .limit(1);
+  return admin ? { ...ctx, userId: admin.id, role: "admin" } : ctx;
+}
+
+export async function invokeToolForTests(
   db: McpDatabase,
   ctx: AuthContext,
   name: McpToolName,
   args: unknown,
 ): ReturnType<typeof invokeMcpTool> {
+  ctx = await withLegacyAdmin(db, ctx);
   if (
     FULL_RESPONSE_WRITES.has(name) &&
     args &&

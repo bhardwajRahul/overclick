@@ -6,6 +6,7 @@ import { revalidatePath } from "next/cache";
 import type { ActionResult } from "../lib/action-result";
 import { getSession } from "../lib/cookies";
 import { db } from "../lib/db";
+import { authContextForUser } from "../lib/scope";
 import { invokeTool } from "../mcp/tools";
 
 /**
@@ -31,17 +32,11 @@ export async function discardTaskAction(
     .limit(1);
   if (!found) return { ok: false, error: "Card not found." };
 
+  const acting = await authContextForUser(db(), session, found.workspaceId);
+  if (!acting) return { ok: false, error: "Session expired. Sign in again." };
   const discarded = await invokeTool(
     db(),
-    {
-      // A signed-in human is the manage authority for this local workspace.
-      // The id is only compared against the claim holder; it is never stored
-      // as a token, so a live agent claim is still refused here, as over MCP.
-      tokenId: session.userId,
-      workspaceId: found.workspaceId,
-      tokenLabel: session.email,
-      canManage: true,
-    },
+    acting,
     "task_update",
     { task_id: taskId, status: "descartado", comment: reason.trim() },
   );

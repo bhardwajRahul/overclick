@@ -24,7 +24,7 @@ const origem = {
 async function connectClient(world: TestWorld, tokenId = world.tokenId) {
   const server = await createOverclickMcpServer({
     db: world.db,
-    ctx: { tokenId, workspaceId: world.workspaceId, tokenLabel: "test" },
+    ctx: { tokenId, workspaceId: world.workspaceId, tokenLabel: "test", userId: world.adminUserId, role: "admin" },
   });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: "overclick-test", version: "0.0.0" });

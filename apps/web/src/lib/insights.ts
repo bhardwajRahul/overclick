@@ -28,6 +28,12 @@ import {
   type UsageSegment,
 } from "@agent-board/db";
 import { resolveCatalogCli } from "./executors";
+import {
+  missionScope,
+  projectScope,
+  taskScope,
+  type MaybePrincipal,
+} from "./scope";
 
 /** Postgres or PGlite drizzle client — the query surface insights needs. */
 export type InsightsDb = Pick<Database, "select">;
@@ -95,9 +101,16 @@ export type ReopenRow = {
 };
 
 /** Every execution attempt in the workspace, joined to its card, project and mission. */
+/**
+ * `undefined` reads the whole workspace (the web page, until it is scoped);
+ * a principal, or null for "nobody", narrows to what that person may see.
+ */
+type ScopeArg = MaybePrincipal | undefined;
+
 export async function loadInsightAttemptRows(
   db: InsightsDb,
   workspaceId: string,
+  principal?: ScopeArg,
 ): Promise<InsightAttemptRow[]> {
   return db
     .select({
@@ -140,7 +153,13 @@ export async function loadInsightAttemptRows(
     .innerJoin(task, eq(executionAttempt.taskId, task.id))
     .innerJoin(project, eq(task.projectId, project.id))
     .leftJoin(mission, eq(task.missionId, mission.id))
-    .where(eq(project.workspaceId, workspaceId));
+    .where(
+      and(
+        eq(project.workspaceId, workspaceId),
+        principal === undefined ? undefined : projectScope(principal),
+        principal === undefined ? undefined : taskScope(principal),
+      ),
+    );
 }
 
 /**
@@ -155,6 +174,7 @@ type MissionAttemptTable = Record<string, any>;
 export async function loadMissionAttemptRows(
   db: InsightsDb,
   workspaceId: string,
+  principal?: ScopeArg,
 ): Promise<MissionAttemptInsightRow[]> {
   const missionAttempt = (
     BoardDb as unknown as { missionAttempt?: MissionAttemptTable }
@@ -194,7 +214,12 @@ export async function loadMissionAttemptRows(
     .from(missionAttempt as any)
     .innerJoin(mission, eq(missionAttempt.missionId, mission.id))
     .leftJoin(project, eq(missionAttempt.projectId, project.id))
-    .where(eq(mission.workspaceId, workspaceId));
+    .where(
+      and(
+        eq(mission.workspaceId, workspaceId),
+        principal === undefined ? undefined : missionScope(principal),
+      ),
+    );
 
   return rows as MissionAttemptInsightRow[];
 }
@@ -251,6 +276,7 @@ export function filterMissionAttempts<
 export async function loadReopenRows(
   db: InsightsDb,
   workspaceId: string,
+  principal?: ScopeArg,
 ): Promise<ReopenRow[]> {
   return db
     .select({
@@ -263,6 +289,8 @@ export async function loadReopenRows(
     .where(
       and(
         eq(project.workspaceId, workspaceId),
+        principal === undefined ? undefined : projectScope(principal),
+        principal === undefined ? undefined : taskScope(principal),
         or(isNotNull(taskComment.authorUserId), eq(taskComment.reopens, true)),
       ),
     );

@@ -11,6 +11,7 @@ import { revalidatePath } from "next/cache";
 import type { ActionResult } from "../lib/action-result";
 import { getSession } from "../lib/cookies";
 import { db } from "../lib/db";
+import { authContextForUser } from "../lib/scope";
 import { invokeTool } from "../mcp/tools";
 
 /** Human release from the card detail, using the same atomic path as MCP. */
@@ -26,16 +27,11 @@ export async function releaseClaimAction(taskId: string): Promise<ActionResult> 
     .limit(1);
   if (!found) return { ok: false, error: "Card not found." };
 
+  const acting = await authContextForUser(db(), session, found.workspaceId);
+  if (!acting) return { ok: false, error: "Session expired. Sign in again." };
   const released = await invokeTool(
     db(),
-    {
-      // A signed-in human is the manage authority for this local workspace.
-      // The id is only compared in task_release; it is never stored as a token.
-      tokenId: session.userId,
-      workspaceId: found.workspaceId,
-      tokenLabel: session.email,
-      canManage: true,
-    },
+    acting,
     "task_release",
     { task_id: taskId, reason: "released by a signed-in human from the board" },
   );

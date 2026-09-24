@@ -61,6 +61,10 @@ export async function authenticateBearer(
     .set({ lastUsedAt: new Date() })
     .where(eq(mcpToken.id, row.id));
 
+  // A deactivated owner keeps the token row but loses every door: no user on
+  // the context means no principal, and the scope module answers "nothing".
+  const acting = owner?.active ? owner : undefined;
+
   return {
     ok: true,
     ctx: {
@@ -68,9 +72,9 @@ export async function authenticateBearer(
       workspaceId: row.workspaceId,
       tokenLabel: row.label,
       canManage: row.canManage,
-      userId: owner?.id ?? null,
-      role: owner?.role ?? null,
-      organizationId: owner?.organizationId ?? null,
+      userId: acting?.id ?? null,
+      role: acting?.role ?? null,
+      organizationId: acting?.organizationId ?? null,
     },
   };
 }

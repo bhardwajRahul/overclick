@@ -7,11 +7,12 @@ import {
   toolContracts,
   type McpToolName,
 } from "@agent-board/mcp-core";
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { invokeTool } from "./tools";
 import type { AuthContext, McpDatabase } from "./types";
 import { APP_VERSION } from "../lib/updates";
+import { principalFromAuth, projectScope } from "../lib/scope";
 
 // The first sentence disambiguates the two products: field tests burned
 // sessions with agents registering activities in Overclock instead of here.
@@ -173,7 +174,12 @@ export async function createOverclickMcpServer(opts: {
       context: project.context,
     })
     .from(project)
-    .where(eq(project.workspaceId, opts.ctx.workspaceId))
+    .where(
+      and(
+        eq(project.workspaceId, opts.ctx.workspaceId),
+        projectScope(principalFromAuth(opts.ctx)),
+      ),
+    )
     .orderBy(asc(project.createdAt));
   const [ws] = await opts.db
     .select({ executors: workspace.executors })

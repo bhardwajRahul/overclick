@@ -85,6 +85,8 @@ describe("MCP tool edge cases against a test db", () => {
       tokenId: world.tokenId,
       workspaceId: world.workspaceId,
       tokenLabel: "test",
+      userId: world.adminUserId,
+      role: "admin" as const,
     };
   }
 

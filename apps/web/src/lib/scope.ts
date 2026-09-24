@@ -63,6 +63,31 @@ export async function principalFromUserId(
   };
 }
 
+/**
+ * The context a web action hands the MCP tools when a signed-in human acts, so
+ * the tools apply the same scope to them as to their tokens. Null when the
+ * user cannot be identified or was deactivated: the action must refuse.
+ */
+export async function authContextForUser(
+  db: Pick<McpDatabase, "select">,
+  session: { userId: string; email: string },
+  workspaceId: string,
+): Promise<AuthContext | null> {
+  const principal = await principalFromUserId(db, session.userId);
+  if (!principal) return null;
+  return {
+    // The id is only compared against a claim holder; it is never stored as a
+    // token, so a live agent claim is still refused here, as over MCP.
+    tokenId: session.userId,
+    workspaceId,
+    tokenLabel: session.email,
+    userId: principal.userId,
+    role: principal.role,
+    organizationId: principal.organizationId,
+    canManage: principal.role === "admin",
+  };
+}
+
 export function isAdmin(principal: MaybePrincipal): boolean {
   return principal?.role === "admin";
 }
