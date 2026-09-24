@@ -160,6 +160,31 @@ export type AcceptInvitationResult =
 class EmailTaken extends Error {}
 
 /**
+ * Postgres' unique violation, as the driver raised it or as drizzle wrapped it
+ * (the original then sits in `cause`).
+ */
+function isUniqueViolation(error: unknown): boolean {
+  for (let current: unknown = error, depth = 0; current && depth < 3; depth += 1) {
+    if ((current as { code?: unknown }).code === "23505") return true;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
+/**
+ * The secret carried in an invite link, decoded. A link someone mangled into a
+ * malformed escape (a lone `%`) decodes to nothing (OCL-227), which every
+ * reader of it answers as "invalid", instead of throwing a URIError.
+ */
+export function decodeInvitationSecret(raw: string): string {
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return "";
+  }
+}
+
+/**
  * Creates the invited member and spends the link, in one transaction. The
  * password is hashed by the caller, so this stays free of scrypt and testable.
  */
@@ -227,6 +252,11 @@ export async function acceptInvitation(
     }
   } catch (error) {
     if (error instanceof EmailTaken) return { ok: false, reason: "email_taken" };
+    // Two pending links for the same email accepted at the same moment: both
+    // pass the check above before either commits, and the second insert hits
+    // the unique email (OCL-227). Same answer as the check gives; the rollback
+    // has already put that second link back, unspent.
+    if (isUniqueViolation(error)) return { ok: false, reason: "email_taken" };
     throw error;
   }
 

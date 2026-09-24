@@ -1,7 +1,7 @@
 import { NebulaAtmosphere } from "../../../components/nebula-atmosphere";
 import { db } from "../../../lib/db";
 import { dict } from "../../../lib/i18n";
-import { inspectInvitation } from "../../../lib/invitations";
+import { decodeInvitationSecret, inspectInvitation } from "../../../lib/invitations";
 import { APP_VERSION } from "../../../lib/updates";
 import { InviteForm } from "./invite-form";
 
@@ -19,9 +19,10 @@ export default async function InvitePage({
   params: Promise<{ token: string }>;
 }) {
   const { token } = await params;
+  const secret = decodeInvitationSecret(token);
   const ws = await db().query.workspace.findFirst();
   const t = dict(ws?.language);
-  const found = await inspectInvitation(db(), decodeURIComponent(token));
+  const found = await inspectInvitation(db(), secret);
 
   return (
     <div className="nb nebula-surface nb-center nb-auth">
@@ -48,7 +49,7 @@ export default async function InvitePage({
                   {t.auth.inviteSub(found.email, found.organizationName)}
                 </p>
                 <InviteForm
-                  token={decodeURIComponent(token)}
+                  token={secret}
                   email={found.email}
                   lang={ws?.language ?? "en"}
                 />
