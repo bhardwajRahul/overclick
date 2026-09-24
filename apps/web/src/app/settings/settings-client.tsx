@@ -37,6 +37,7 @@ import {
   OrganizationContextEditor,
   type OrganizationRow,
 } from "./organization-context-editor";
+import { TeamPanel, type TeamData } from "./team-panel";
 import {
   ProjectContextEditor,
   type ProjectContextRow,
@@ -115,7 +116,13 @@ export function SettingsClient({
   enableCommand,
   manualCommand,
   sourceCommand,
+  isAdmin,
+  team,
 }: {
+  /** False for a member: only their own tokens and pairing are shown. */
+  isAdmin: boolean;
+  /** Invitations and the people on the board. Null for a member. */
+  team: TeamData | null;
   host: string;
   origin: string;
   workspaceName: string;
@@ -165,17 +172,21 @@ export function SettingsClient({
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
-  const tabs = [
-    { id: "exec", label: t.settings.tabExecutors },
-    { id: "organizations", label: t.settings.tabOrganizations },
-    { id: "projects", label: t.settings.tabProjects },
-    { id: "prices", label: t.settings.tabPrices },
-    { id: "recipes", label: t.settings.tabRecipes },
-    { id: "tokens", label: t.settings.tabTokens },
-    { id: "claims", label: t.settings.tabClaims },
-    { id: "language", label: t.settings.tabLanguage },
-    { id: "updates", label: t.updates.tabUpdates },
-  ];
+  // A member manages their own tokens and pairing, nothing else (OCL-222).
+  const tabs = isAdmin
+    ? [
+        { id: "exec", label: t.settings.tabExecutors },
+        { id: "organizations", label: t.settings.tabOrganizations },
+        { id: "projects", label: t.settings.tabProjects },
+        { id: "prices", label: t.settings.tabPrices },
+        { id: "recipes", label: t.settings.tabRecipes },
+        { id: "tokens", label: t.settings.tabTokens },
+        { id: "team", label: t.settings.tabTeam },
+        { id: "claims", label: t.settings.tabClaims },
+        { id: "language", label: t.settings.tabLanguage },
+        { id: "updates", label: t.updates.tabUpdates },
+      ]
+    : [{ id: "tokens", label: t.settings.tabTokens }];
 
   // ---- update mode (off by default: no outbound request at all)
   const [updMode, setUpdMode] = useState<UpdateMode>(updateMode);
@@ -467,6 +478,7 @@ export function SettingsClient({
         {err ? <p className="werr" role="alert">{err}</p> : null}
         {msg ? <p className="wok" role="status">{msg}</p> : null}
 
+        {isAdmin ? (<>
         {/* ---- ORGANIZATIONS ---- */}
         <div
           className={`tabpane${tab === "organizations" ? " active" : ""}`}
@@ -775,6 +787,7 @@ export function SettingsClient({
             </button>
           </div>
         </div>
+        </>) : null}
 
         {/* ---- TOKENS ---- */}
         <div
@@ -813,6 +826,7 @@ export function SettingsClient({
                   {/* The box the MCP refusal points at. It is a control and not
                       a badge because reading "this token needs manage" and
                       finding nothing to tick is the whole bug (OCL-136). */}
+                  {isAdmin ? (
                   <label className="tok-cap" title={t.settings.manageLabel}>
                     <input
                       type="checkbox"
@@ -823,6 +837,7 @@ export function SettingsClient({
                     />
                     <span>{t.settings.manageBadge}</span>
                   </label>
+                  ) : null}
                   <span className="val">{tok.masked}</span>
                   <button className="btn-rev" disabled={pending || tok.revoked} onClick={() => revoke(tok.id)}>
                     {tok.revoked ? t.settings.revoked : t.settings.revoke}
@@ -868,17 +883,21 @@ export function SettingsClient({
               </button>
             </div>
 
-            <label className="upd-toggle">
-              <input
-                type="checkbox"
-                checked={newCanManage}
-                onChange={(e) => setNewCanManage(e.target.checked)}
-              />
-              <span>{t.settings.manageLabel}</span>
-            </label>
-            <div className="policy-note" style={{ borderTop: 0, paddingTop: 8 }}>
-              {t.settings.manageNote}
-            </div>
+            {isAdmin ? (
+              <>
+                <label className="upd-toggle">
+                  <input
+                    type="checkbox"
+                    checked={newCanManage}
+                    onChange={(e) => setNewCanManage(e.target.checked)}
+                  />
+                  <span>{t.settings.manageLabel}</span>
+                </label>
+                <div className="policy-note" style={{ borderTop: 0, paddingTop: 8 }}>
+                  {t.settings.manageNote}
+                </div>
+              </>
+            ) : null}
           </div>
 
           {pairFresh ? (
@@ -908,6 +927,19 @@ export function SettingsClient({
           </details>
         </div>
 
+        {/* ---- TEAM ---- */}
+        {isAdmin && team ? (
+          <div
+            className={`tabpane${tab === "team" ? " active" : ""}`}
+            id="setpane-team"
+            role="tabpanel"
+            aria-labelledby="settab-team"
+          >
+            <TeamPanel {...team} origin={origin} t={t} dateLocale={dateLocale} />
+          </div>
+        ) : null}
+
+        {isAdmin ? (<>
         {/* ---- CLAIM LEASE ---- */}
         <div
           className={`tabpane${tab === "claims" ? " active" : ""}`}
@@ -1018,6 +1050,7 @@ export function SettingsClient({
             lang={lang}
           />
         </div>
+        </>) : null}
       </div>
     </>
   );

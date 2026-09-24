@@ -6,14 +6,30 @@ import {
   timestamp,
   uuid,
 } from "drizzle-orm/pg-core";
+import { organization } from "./organization";
 
 /** Local auth only. Email is an identifier, not a channel. */
 export const user = pgTable("user", {
   id: uuid("id").primaryKey().defaultRandom(),
   email: text("email").notNull().unique(),
   passwordHash: text("password_hash").notNull(),
+  /**
+   * `admin` sees and changes everything; `member` only what they authored,
+   * inside `organizationId`. The column default is the restrictive one: a
+   * user row nobody labelled is a member, never an admin.
+   */
+  role: text("role").$type<"admin" | "member">().notNull().default("member"),
+  /** The one organization a member belongs to. Null for admins. */
+  organizationId: uuid("organization_id").references(() => organization.id, {
+    onDelete: "set null",
+  }),
   active: boolean("active").notNull().default(true),
   sessionVersion: integer("session_version").notNull().default(1),
+  /**
+   * When this admin last dismissed the "a member finished installing" notice
+   * on the home (OCL-222). Installs after it are the ones still announced.
+   */
+  teamNoticeSeenAt: timestamp("team_notice_seen_at", { withTimezone: true }),
   /**
    * `all` or organization uuids joined. Null = every organization, which is
    * what an instance that never split into more than one business sees.

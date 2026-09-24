@@ -10,6 +10,8 @@ import { revalidatePath } from "next/cache";
 import type { ActionResult } from "../lib/action-result";
 import { getSession } from "../lib/cookies";
 import { db } from "../lib/db";
+import { canManageStructure } from "../lib/scope";
+import { sessionPrincipal } from "../lib/web-scope";
 
 export type ProjectContextInput = {
   projectId: string;
@@ -28,6 +30,10 @@ export async function saveProjectContextAction(
 ): Promise<ActionResult> {
   const session = await getSession();
   if (!session) return { ok: false, error: "Session expired. Sign in again." };
+  // Editing a project is the admin's; a member only reads it.
+  if (!canManageStructure(await sessionPrincipal(session))) {
+    return { ok: false, error: "Only an admin can change a project." };
+  }
 
   const ws = await db().query.workspace.findFirst();
   if (!ws) return { ok: false, error: "Workspace not found." };

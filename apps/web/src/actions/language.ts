@@ -5,6 +5,7 @@ import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import type { ActionResult } from "../lib/action-result";
 import { getSession } from "../lib/cookies";
+import { ADMIN_ONLY, sessionCanManageWorkspace } from "../lib/web-scope";
 import { db } from "../lib/db";
 import { isLang } from "../lib/i18n";
 
@@ -12,6 +13,7 @@ import { isLang } from "../lib/i18n";
 export async function saveLanguageAction(lang: string): Promise<ActionResult> {
   const session = await getSession();
   if (!session) return { ok: false, error: "Session expired. Sign in again." };
+  if (!(await sessionCanManageWorkspace(session))) return { ok: false, error: ADMIN_ONLY };
   if (!isLang(lang)) return { ok: false, error: "Unknown language." };
 
   const ws = await db().query.workspace.findFirst();

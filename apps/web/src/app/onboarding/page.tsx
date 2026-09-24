@@ -1,10 +1,11 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNotNull } from "drizzle-orm";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { mcpToken, organization, project } from "@agent-board/db";
 import { getSession } from "../../lib/cookies";
 import { db } from "../../lib/db";
 import { selectionFromConfig } from "../../lib/executors";
+import { sessionPrincipal } from "../../lib/web-scope";
 import { Wizard } from "./wizard";
 
 export const dynamic = "force-dynamic";
@@ -16,6 +17,8 @@ export default async function OnboardingPage({
 }) {
   const session = await getSession();
   if (!session) redirect("/login");
+  const principal = await sessionPrincipal(session);
+  if (!principal) redirect("/login");
 
   const ws = await db().query.workspace.findFirst();
   if (!ws) redirect("/setup");
@@ -23,6 +26,44 @@ export default async function OnboardingPage({
   // An already-configured instance (an agent really connected once) skips the
   // wizard. Deep link ?step=N reopens it for adjustments.
   const sp = await searchParams;
+  const h = await headers();
+  // A TLS instance sits behind a proxy that terminates it, so the scheme comes
+  // from the forwarded header. Never hardcode http: the commands we print carry
+  // a bearer token.
+  const host = h.get("host") ?? "<your-host>";
+  const proto = h.get("x-forwarded-proto")?.split(",")[0].trim()
+    ?? (host.startsWith("localhost") || host.startsWith("127.0.0.1") ? "http" : "https");
+  const origin = `${proto}://${host}`;
+
+  // A member only installs (OCL-222): the plugin and the pairing that mints
+  // THEIR token. Creating the organization and project is the admin's, and
+  // nothing of the admin's workspace is read for this page.
+  if (principal.role !== "admin") {
+    const ownUsed = await db().query.mcpToken.findFirst({
+      where: and(
+        eq(mcpToken.workspaceId, ws.id),
+        eq(mcpToken.ownerUserId, principal.userId),
+        eq(mcpToken.revoked, false),
+        isNotNull(mcpToken.lastUsedAt),
+      ),
+      columns: { id: true },
+    });
+    if (ownUsed && sp.step === undefined) redirect("/home");
+    return (
+      <div className="nb nebula-surface nb-center">
+        <Wizard
+          host={host}
+          origin={origin}
+          initialStep={3}
+          installOnly
+          project={null}
+          executors={selectionFromConfig([])}
+          lang={ws.language}
+        />
+      </div>
+    );
+  }
+
   const usedToken = await db().query.mcpToken.findFirst({
     where: and(eq(mcpToken.workspaceId, ws.id), eq(mcpToken.revoked, false)),
     columns: { lastUsedAt: true },
@@ -40,15 +81,6 @@ export default async function OnboardingPage({
         columns: { name: true },
       })
     : null;
-  const h = await headers();
-  // A TLS instance sits behind a proxy that terminates it, so the scheme comes
-  // from the forwarded header. Never hardcode http: the commands we print carry
-  // a bearer token.
-  const host = h.get("host") ?? "<your-host>";
-  const proto = h.get("x-forwarded-proto")?.split(",")[0].trim()
-    ?? (host.startsWith("localhost") || host.startsWith("127.0.0.1") ? "http" : "https");
-  const origin = `${proto}://${host}`;
-
   const rawStep = Number(Array.isArray(sp.step) ? sp.step[0] : sp.step);
   const initialStep = rawStep >= 1 && rawStep <= 3 ? Math.floor(rawStep) : 1;
 

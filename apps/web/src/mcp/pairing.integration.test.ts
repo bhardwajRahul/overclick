@@ -193,6 +193,7 @@ describe("one-time token pairing", () => {
     const created = await createPairingCode(world.db, {
       workspaceId: world.workspaceId,
       label: "paired via code",
+      userId: world.adminUserId,
     });
     expect(created.code).toMatch(/^\d{6}$/);
     expect(created.expiresAt.getTime()).toBeGreaterThan(Date.now());
@@ -224,7 +225,7 @@ describe("one-time token pairing", () => {
       expect(again.error).toMatch(/not found or expired/i);
     }
 
-    const status = await pairingStatus(world.db, created.id);
+    const status = await pairingStatus(world.db, created.id, world.adminUserId);
     expect(status.paired).toBe(true);
   });
 

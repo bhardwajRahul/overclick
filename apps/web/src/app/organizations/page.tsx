@@ -16,6 +16,7 @@ import {
   loadOrganizationOverviews,
   type OrganizationOverview,
 } from "../../lib/organizations-query";
+import { pagePrincipal } from "../../lib/web-scope";
 import { organizationsCopy, type OrganizationsCopy } from "./copy";
 
 export const dynamic = "force-dynamic";
@@ -124,6 +125,7 @@ function OrganizationSection({
 export default async function OrganizationsPage() {
   const session = await getSession();
   if (!session) redirect("/login");
+  const principal = await pagePrincipal(session);
 
   const ws = await db().query.workspace.findFirst();
   if (!ws) redirect("/setup");
@@ -136,6 +138,7 @@ export default async function OrganizationsPage() {
     ws.id,
     ws.pricingEnabled,
     prices,
+    principal,
   );
 
   const shared = dict(ws.language);

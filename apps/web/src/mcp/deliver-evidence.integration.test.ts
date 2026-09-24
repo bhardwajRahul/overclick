@@ -15,7 +15,7 @@ import { closeTestWorld, createTestWorld, type TestWorld } from "./test-db";
 async function connectClient(world: TestWorld) {
   const server = await createOverclickMcpServer({
     db: world.db,
-    ctx: { tokenId: world.tokenId, workspaceId: world.workspaceId, tokenLabel: "test" },
+    ctx: { tokenId: world.tokenId, workspaceId: world.workspaceId, tokenLabel: "test", userId: world.adminUserId, role: "admin" },
   });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: "overclick-test", version: "0.0.0" });

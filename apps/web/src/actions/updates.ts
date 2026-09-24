@@ -8,6 +8,7 @@ import { revalidatePath } from "next/cache";
 import type { ActionResult } from "../lib/action-result";
 import { toRecord } from "../lib/auto-update";
 import { getSession } from "../lib/cookies";
+import { ADMIN_ONLY, sessionCanManageWorkspace } from "../lib/web-scope";
 import { db } from "../lib/db";
 import { detectRuntime } from "../lib/runtime";
 import type { SourceUpdateReport } from "../lib/source-update";
@@ -35,6 +36,7 @@ export async function saveUpdateModeAction(
 ): Promise<ActionResult> {
   const session = await getSession();
   if (!session) return { ok: false, error: "Session expired. Sign in again." };
+  if (!(await sessionCanManageWorkspace(session))) return { ok: false, error: ADMIN_ONLY };
   if (!MODES.includes(mode)) return { ok: false, error: "Unknown update mode." };
 
   const ws = await db().query.workspace.findFirst();
@@ -61,6 +63,7 @@ export type TriggerUpdateResult =
 export async function triggerUpdateAction(): Promise<TriggerUpdateResult> {
   const session = await getSession();
   if (!session) return { ok: false, error: "Session expired. Sign in again." };
+  if (!(await sessionCanManageWorkspace(session))) return { ok: false, error: ADMIN_ONLY };
 
   const dir = updateHelperDir();
   if (!dir) return { ok: true, triggered: false };
@@ -89,6 +92,7 @@ export type UpdaterStateResult =
 export async function readUpdaterStateAction(): Promise<UpdaterStateResult> {
   const session = await getSession();
   if (!session) return { ok: false, error: "Session expired. Sign in again." };
+  if (!(await sessionCanManageWorkspace(session))) return { ok: false, error: ADMIN_ONLY };
   return { ok: true, state: await readUpdaterState() };
 }
 
@@ -110,6 +114,7 @@ export async function runSourceUpdateAction(
 ): Promise<SourceUpdateResult> {
   const session = await getSession();
   if (!session) return { ok: false, error: "Session expired. Sign in again." };
+  if (!(await sessionCanManageWorkspace(session))) return { ok: false, error: ADMIN_ONLY };
   if (detectRuntime() !== "source") {
     return {
       ok: false,

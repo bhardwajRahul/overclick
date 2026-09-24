@@ -14,7 +14,7 @@ import { invokeToolForTests as invokeTool } from "./test-tools";
 describe("task_create without ceremony", () => {
   let world: TestWorld;
   afterEach(async () => { if (world) await closeTestWorld(world); });
-  const ctx = () => ({ tokenId: world.tokenId, workspaceId: world.workspaceId, tokenLabel: "laschuk-mac" });
+  const ctx = () => ({ tokenId: world.tokenId, workspaceId: world.workspaceId, tokenLabel: "laschuk-mac", userId: world.adminUserId, role: "admin" as const });
   const contract = {
     title: "Ceremony", type: "feature" as const,
     o_que: "Filing a card is faster", por_que: "It is the board's most expensive call",

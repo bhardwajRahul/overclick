@@ -96,6 +96,21 @@ import {
   type InsightsDb,
 } from "../lib/insights";
 import { manageDenialMessage } from "../lib/manage-capability";
+import {
+  canManageStructure,
+  canManageWorkspace,
+  canSeeMission,
+  canSeeOrganization,
+  canSeeProject,
+  canSeeTask,
+  isAdmin,
+  missionScope,
+  organizationScope,
+  principalFromAuth,
+  projectScope,
+  taskScope,
+  type MaybePrincipal,
+} from "../lib/scope";
 import { loadModelPrices, type PricesDb } from "../lib/prices";
 import {
   bindUsageRecipe,
@@ -668,14 +683,35 @@ export function isMcpToolName(name: string): name is McpToolName {
 const ORGANIZATION_HINT =
   "Call organization_list to see the organizations in this workspace, or organization_create to start one.";
 
+/**
+ * Internal lookups that only serve rows a caller already passed the scope
+ * check for (names of the organizations behind a visible project) run as the
+ * workspace itself, not as a person.
+ */
+function workspaceCtx(workspaceId: string): AuthContext {
+  return {
+    tokenId: "workspace",
+    workspaceId,
+    tokenLabel: "workspace",
+    userId: "workspace",
+    role: "admin",
+    organizationId: null,
+  };
+}
+
 async function listOrganizations(
   db: Tx,
-  workspaceId: string,
+  ctx: AuthContext,
 ): Promise<OrganizationRow[]> {
   return db
     .select()
     .from(organization)
-    .where(eq(organization.workspaceId, workspaceId))
+    .where(
+      and(
+        eq(organization.workspaceId, ctx.workspaceId),
+        organizationScope(principalFromAuth(ctx)),
+      ),
+    )
     .orderBy(asc(organization.createdAt));
 }
 
@@ -685,7 +721,7 @@ async function listOrganizations(
  */
 async function findOrganization(
   db: Tx,
-  workspaceId: string,
+  ctx: AuthContext,
   organizationRef: string,
   lock = false,
 ): Promise<OrganizationRow | null> {
@@ -698,7 +734,13 @@ async function findOrganization(
   const query = db
     .select()
     .from(organization)
-    .where(and(eq(organization.workspaceId, workspaceId), identity))
+    .where(
+      and(
+        eq(organization.workspaceId, ctx.workspaceId),
+        organizationScope(principalFromAuth(ctx)),
+        identity,
+      ),
+    )
     .limit(1);
   const rows = lock ? await query.for("update") : await query;
   return rows[0] ?? null;
@@ -707,10 +749,10 @@ async function findOrganization(
 /** A miss always comes back with the list, so the next call is not a guess. */
 async function organizationNotFound(
   db: Tx,
-  workspaceId: string,
+  ctx: AuthContext,
   ref: string,
 ): Promise<Result<never>> {
-  const rows = await listOrganizations(db, workspaceId);
+  const rows = await listOrganizations(db, ctx);
   const options = rows.length
     ? ` Available: ${rows.map((row) => `${row.name} (${row.id})`).join(", ")}.`
     : "";
@@ -733,17 +775,17 @@ type OrganizationChoice =
  */
 async function resolveOrganizationChoice(
   db: Tx,
-  workspaceId: string,
+  ctx: AuthContext,
   ref: string | undefined,
 ): Promise<OrganizationChoice> {
   if (ref !== undefined) {
-    const row = await findOrganization(db, workspaceId, ref);
+    const row = await findOrganization(db, ctx, ref);
     return row
       ? { row }
-      : { refusal: await organizationNotFound(db, workspaceId, ref) };
+      : { refusal: await organizationNotFound(db, ctx, ref) };
   }
 
-  const rows = await listOrganizations(db, workspaceId);
+  const rows = await listOrganizations(db, ctx);
   const only = rows[0];
   if (rows.length === 1 && only) return { row: only };
   if (rows.length === 0) {
@@ -792,7 +834,11 @@ async function organizationOf(
   workspaceId: string,
   organizationId: string,
 ): Promise<OrganizationRow> {
-  const row = await findOrganization(db, workspaceId, organizationId);
+  const row = await findOrganization(
+    db,
+    workspaceCtx(workspaceId),
+    organizationId,
+  );
   if (!row) {
     throw new Error(`organization ${organizationId} is not in this workspace`);
   }
@@ -802,24 +848,31 @@ async function organizationOf(
 /** What every organization in the workspace holds, in three grouped queries. */
 async function organizationCounts(
   db: Tx,
-  workspaceId: string,
+  ctx: AuthContext,
 ): Promise<Map<string, OrganizationCounts>> {
+  const principal = principalFromAuth(ctx);
   const [projects, missions, cards] = await Promise.all([
     db
       .select({ id: project.organizationId, n: count() })
       .from(project)
-      .where(eq(project.workspaceId, workspaceId))
+      .where(and(eq(project.workspaceId, ctx.workspaceId), projectScope(principal)))
       .groupBy(project.organizationId),
     db
       .select({ id: mission.organizationId, n: count() })
       .from(mission)
-      .where(eq(mission.workspaceId, workspaceId))
+      .where(and(eq(mission.workspaceId, ctx.workspaceId), missionScope(principal)))
       .groupBy(mission.organizationId),
     db
       .select({ id: project.organizationId, n: count() })
       .from(task)
       .innerJoin(project, eq(task.projectId, project.id))
-      .where(eq(project.workspaceId, workspaceId))
+      .where(
+        and(
+          eq(project.workspaceId, ctx.workspaceId),
+          projectScope(principal),
+          taskScope(principal),
+        ),
+      )
       .groupBy(project.organizationId),
   ]);
 
@@ -836,8 +889,8 @@ async function organizationCounts(
 }
 
 async function organizationList(db: McpDatabase, ctx: AuthContext) {
-  const rows = await listOrganizations(db, ctx.workspaceId);
-  const counts = await organizationCounts(db, ctx.workspaceId);
+  const rows = await listOrganizations(db, ctx);
+  const counts = await organizationCounts(db, ctx);
   return {
     organizations: rows.map((row) =>
       mapOrganization(row, counts.get(row.id) ?? emptyOrganizationCounts()),
@@ -850,11 +903,11 @@ async function organizationGet(
   ctx: AuthContext,
   input: { organization_id: string },
 ) {
-  const row = await findOrganization(db, ctx.workspaceId, input.organization_id);
+  const row = await findOrganization(db, ctx, input.organization_id);
   if (!row) {
-    return organizationNotFound(db, ctx.workspaceId, input.organization_id);
+    return organizationNotFound(db, ctx, input.organization_id);
   }
-  const counts = await organizationCounts(db, ctx.workspaceId);
+  const counts = await organizationCounts(db, ctx);
   return {
     organization: mapOrganizationDetail(
       row,
@@ -868,11 +921,13 @@ async function organizationCreate(
   ctx: AuthContext,
   input: { name: string; context?: string },
 ) {
+  const structureDenied = requireStructure(ctx, "organization_create");
+  if (structureDenied) return structureDenied;
   const name = input.name.trim();
   // The name is how callers refer to a business, so two of them sharing one
   // would make every reference ambiguous. Checked here for a clean message,
   // and again by the unique index below for concurrent creates.
-  const taken = await findOrganization(db, ctx.workspaceId, name);
+  const taken = await findOrganization(db, ctx, name);
   if (taken) {
     return err(
       "INVALID_ARGUMENT",
@@ -923,20 +978,22 @@ async function organizationUpdate(
     return?: "ack" | "full";
   },
 ) {
+  const structureDenied = requireStructure(ctx, "organization_update");
+  if (structureDenied) return structureDenied;
   const current = await findOrganization(
     db,
-    ctx.workspaceId,
+    ctx,
     input.organization_id,
   );
   if (!current) {
-    return organizationNotFound(db, ctx.workspaceId, input.organization_id);
+    return organizationNotFound(db, ctx, input.organization_id);
   }
 
   const patch: { name?: string; context?: string | null } = {};
   if (input.name !== undefined) {
     const name = input.name.trim();
     if (name.toLowerCase() !== current.name.toLowerCase()) {
-      const taken = await findOrganization(db, ctx.workspaceId, name);
+      const taken = await findOrganization(db, ctx, name);
       if (taken) {
         return err(
           "INVALID_ARGUMENT",
@@ -974,7 +1031,7 @@ async function organizationUpdate(
   if (!row) throw new Error("failed to update organization");
 
   if (input.return === "full") {
-    const counts = await organizationCounts(db, ctx.workspaceId);
+    const counts = await organizationCounts(db, ctx);
     return {
       organization: mapOrganizationDetail(
         row,
@@ -994,22 +1051,24 @@ async function organizationDelete(
   ctx: AuthContext,
   input: { organization_id: string; reassign_to?: string },
 ) {
+  const structureDenied = requireStructure(ctx, "organization_delete");
+  if (structureDenied) return structureDenied;
   return db.transaction(async (tx) => {
     const current = await findOrganization(
       tx,
-      ctx.workspaceId,
+      ctx,
       input.organization_id,
       true,
     );
     if (!current) {
-      return organizationNotFound(tx, ctx.workspaceId, input.organization_id);
+      return organizationNotFound(tx, ctx, input.organization_id);
     }
 
     let heir: OrganizationRow | null = null;
     if (input.reassign_to !== undefined) {
-      heir = await findOrganization(tx, ctx.workspaceId, input.reassign_to);
+      heir = await findOrganization(tx, ctx, input.reassign_to);
       if (!heir) {
-        return organizationNotFound(tx, ctx.workspaceId, input.reassign_to);
+        return organizationNotFound(tx, ctx, input.reassign_to);
       }
       if (heir.id === current.id) {
         return err(
@@ -1089,11 +1148,15 @@ async function projectList(
   ctx: AuthContext,
   input: { organization?: string; view?: "summary" | "full" },
 ) {
-  const filters = [eq(project.workspaceId, ctx.workspaceId)];
+  const principal = principalFromAuth(ctx);
+  const filters = [
+    eq(project.workspaceId, ctx.workspaceId),
+    projectScope(principal),
+  ];
   if (input.organization) {
-    const org = await findOrganization(db, ctx.workspaceId, input.organization);
+    const org = await findOrganization(db, ctx, input.organization);
     if (!org) {
-      return organizationNotFound(db, ctx.workspaceId, input.organization);
+      return organizationNotFound(db, ctx, input.organization);
     }
     filters.push(eq(project.organizationId, org.id));
   }
@@ -1128,7 +1191,7 @@ async function projectList(
       : await db
           .select({ projectId: task.projectId, status: task.status, n: count() })
           .from(task)
-          .where(inArray(task.projectId, ids))
+          .where(and(inArray(task.projectId, ids), taskScope(principal)))
           .groupBy(task.projectId, task.status);
 
   const byProject = new Map<string, ReturnType<typeof emptyCardCounts>>();
@@ -1161,14 +1224,14 @@ async function projectGet(
     include?: ReadOptions["include"];
   },
 ) {
-  const row = await findProject(db, ctx.workspaceId, input.project_id);
+  const row = await findProject(db, ctx, input.project_id);
   if (!row) {
     return err(
       "NOT_FOUND",
       `Project ${input.project_id} not found in this workspace. ${PROJECT_HINT}`,
     );
   }
-  const cards = await projectCardCounts(db, row.id);
+  const cards = await projectCardCounts(db, row.id, principalFromAuth(ctx));
   const names = await organizationNames(db, ctx.workspaceId);
   const orgName = organizationNameOf(names, row.organizationId);
   return {
@@ -1195,6 +1258,8 @@ async function projectCreate(
     id_prefix?: string;
   },
 ) {
+  const structureDenied = requireStructure(ctx, "project_create");
+  if (structureDenied) return structureDenied;
   const name = input.name.trim();
   if (!name) {
     return err("INVALID_ARGUMENT", "Project name cannot be empty.");
@@ -1218,7 +1283,7 @@ async function projectCreate(
   // The prefix is what every card carries (AGB-1, AGB-2), so a collision would
   // make two projects indistinguishable on the board. Checked here for a clean
   // message, and again by the unique index below for concurrent creates.
-  const taken = await findProject(db, ctx.workspaceId, prefix);
+  const taken = await findProject(db, ctx, prefix);
   if (taken) {
     return err(
       "INVALID_ARGUMENT",
@@ -1228,7 +1293,7 @@ async function projectCreate(
 
   const choice = await resolveOrganizationChoice(
     db,
-    ctx.workspaceId,
+    ctx,
     input.organization,
   );
   if (choice.refusal) return choice.refusal;
@@ -1294,11 +1359,15 @@ async function countCards(db: Tx, projectId: string): Promise<number> {
   return Number(counted?.n ?? 0);
 }
 
-async function projectCardCounts(db: Tx, projectId: string) {
+async function projectCardCounts(
+  db: Tx,
+  projectId: string,
+  principal: MaybePrincipal,
+) {
   const rows = await db
     .select({ status: task.status, n: count() })
     .from(task)
-    .where(eq(task.projectId, projectId))
+    .where(and(eq(task.projectId, projectId), taskScope(principal)))
     .groupBy(task.status);
   const tally = emptyCardCounts();
   for (const row of rows) {
@@ -1372,8 +1441,10 @@ async function projectUpdate(
     return?: "ack" | "full";
   },
 ) {
+  const structureDenied = requireStructure(ctx, "project_update");
+  if (structureDenied) return structureDenied;
   return db.transaction(async (tx) => {
-    const proj = await findProject(tx, ctx.workspaceId, input.project_id, true);
+    const proj = await findProject(tx, ctx, input.project_id, true);
     if (!proj) {
       return err(
         "NOT_FOUND",
@@ -1406,11 +1477,11 @@ async function projectUpdate(
     if (input.organization !== undefined) {
       const moved = await findOrganization(
         tx,
-        ctx.workspaceId,
+        ctx,
         input.organization,
       );
       if (!moved) {
-        return organizationNotFound(tx, ctx.workspaceId, input.organization);
+        return organizationNotFound(tx, ctx, input.organization);
       }
       patch.organizationId = moved.id;
       org = moved;
@@ -1488,7 +1559,7 @@ async function projectUpdate(
             `Project '${proj.name}' holds ${cards} card${cards === 1 ? "" : "s"} whose short ids already start with ${proj.idPrefix} (${proj.idPrefix}-1, ${proj.idPrefix}-2), and those ids are also in branches, commits and PR titles. Renumbering them is not offered. To reorganize, create the project you want with project_create and move the cards into it with task_update passing project_id: each card is restamped with the destination prefix, keeps its old id in previous_short_ids, and the response returns the old-to-new mapping. The prefix of an empty project can still be changed here.`,
           );
         }
-        const taken = await findProject(tx, ctx.workspaceId, prefix);
+        const taken = await findProject(tx, ctx, prefix);
         if (taken) {
           return err(
             "INVALID_ARGUMENT",
@@ -1531,7 +1602,7 @@ async function projectUpdate(
       });
     }
 
-    const counts = await projectCardCounts(tx, row.id);
+    const counts = await projectCardCounts(tx, row.id, principalFromAuth(ctx));
     if (input.return === "full") {
       return { project: mapProjectDetail(row, org.name, counts) };
     }
@@ -1557,7 +1628,9 @@ async function projectContextRefresh(
   ctx: AuthContext,
   input: { project_id: string; force?: boolean },
 ) {
-  const row = await findProject(db, ctx.workspaceId, input.project_id);
+  const structureDenied = requireStructure(ctx, "project_context_refresh");
+  if (structureDenied) return structureDenied;
+  const row = await findProject(db, ctx, input.project_id);
   if (!row) {
     return err(
       "NOT_FOUND",
@@ -1575,7 +1648,7 @@ async function projectContextRefresh(
     actor: ctx.tokenLabel || "mcp",
   });
   if (!refreshed) return err("NOT_FOUND", "Project disappeared during refresh.");
-  const counts = await projectCardCounts(db, refreshed.project.id);
+  const counts = await projectCardCounts(db, refreshed.project.id, principalFromAuth(ctx));
   const names = await organizationNames(db, ctx.workspaceId);
   return {
     project: mapProjectDetail(
@@ -1593,7 +1666,9 @@ async function projectDelete(
   ctx: AuthContext,
   input: { project_id: string; force?: boolean },
 ) {
-  const proj = await findProject(db, ctx.workspaceId, input.project_id);
+  const structureDenied = requireStructure(ctx, "project_delete");
+  if (structureDenied) return structureDenied;
+  const proj = await findProject(db, ctx, input.project_id);
   if (!proj) {
     return err(
       "NOT_FOUND",
@@ -1651,12 +1726,16 @@ async function missionList(
   ctx: AuthContext,
   input: { status?: "ativa" | "pausada" | "concluida"; organization?: string },
 ) {
-  const filters = [eq(mission.workspaceId, ctx.workspaceId)];
+  const principal = principalFromAuth(ctx);
+  const filters = [
+    eq(mission.workspaceId, ctx.workspaceId),
+    missionScope(principal),
+  ];
   if (input.status) filters.push(eq(mission.status, input.status));
   if (input.organization) {
-    const org = await findOrganization(db, ctx.workspaceId, input.organization);
+    const org = await findOrganization(db, ctx, input.organization);
     if (!org) {
-      return organizationNotFound(db, ctx.workspaceId, input.organization);
+      return organizationNotFound(db, ctx, input.organization);
     }
     filters.push(eq(mission.organizationId, org.id));
   }
@@ -1674,7 +1753,7 @@ async function missionList(
       : await db
           .select({ missionId: task.missionId, n: count() })
           .from(task)
-          .where(inArray(task.missionId, ids))
+          .where(and(inArray(task.missionId, ids), taskScope(principal)))
           .groupBy(task.missionId);
   const byMission = new Map(counts.map((row) => [row.missionId, Number(row.n)]));
 
@@ -1699,7 +1778,7 @@ async function missionGet(
     include?: ReadOptions["include"];
   },
 ) {
-  const row = await findMission(db, ctx.workspaceId, input.mission_id);
+  const row = await findMission(db, ctx, input.mission_id);
   if (!row) {
     return err(
       "NOT_FOUND",
@@ -1709,7 +1788,7 @@ async function missionGet(
   const [counted] = await db
     .select({ n: count() })
     .from(task)
-    .where(eq(task.missionId, row.id));
+    .where(and(eq(task.missionId, row.id), taskScope(principalFromAuth(ctx))));
   const names = await organizationNames(db, ctx.workspaceId);
   const mapped = mapMission(
     row,
@@ -1734,7 +1813,7 @@ async function missionCreate(
 ) {
   const choice = await resolveOrganizationChoice(
     db,
-    ctx.workspaceId,
+    ctx,
     input.organization,
   );
   if (choice.refusal) return choice.refusal;
@@ -1751,6 +1830,7 @@ async function missionCreate(
       objective,
       context,
       status: input.status ?? "ativa",
+      createdByUserId: ctx.userId ?? null,
     })
     .returning();
   if (!row) {
@@ -1777,7 +1857,7 @@ async function missionUpdate(
   },
 ) {
   return db.transaction(async (tx) => {
-    const current = await findMission(tx, ctx.workspaceId, input.mission_id, true);
+    const current = await findMission(tx, ctx, input.mission_id, true);
     if (!current) {
       return err(
         "NOT_FOUND",
@@ -1834,11 +1914,11 @@ async function missionUpdate(
     if (input.organization !== undefined) {
       const moved = await findOrganization(
         tx,
-        ctx.workspaceId,
+        ctx,
         input.organization,
       );
       if (!moved) {
-        return organizationNotFound(tx, ctx.workspaceId, input.organization);
+        return organizationNotFound(tx, ctx, input.organization);
       }
       patch.organizationId = moved.id;
       org = moved;
@@ -1880,7 +1960,7 @@ async function missionUpdate(
       const [counted] = await tx
         .select({ n: count() })
         .from(task)
-        .where(eq(task.missionId, current.id));
+        .where(and(eq(task.missionId, current.id), taskScope(principalFromAuth(ctx))));
       if (input.return === "full") {
         return {
           mission: mapMission(current, org.name, Number(counted?.n ?? 0)),
@@ -1909,7 +1989,7 @@ async function missionUpdate(
     const [counted] = await tx
       .select({ n: count() })
       .from(task)
-      .where(eq(task.missionId, row.id));
+      .where(and(eq(task.missionId, row.id), taskScope(principalFromAuth(ctx))));
     if (input.return === "full") {
       return {
         mission: mapMission(row, org.name, Number(counted?.n ?? 0)),
@@ -1934,7 +2014,7 @@ async function missionDelete(
   ctx: AuthContext,
   input: { mission_id: string; force?: boolean },
 ) {
-  const current = await findMission(db, ctx.workspaceId, input.mission_id);
+  const current = await findMission(db, ctx, input.mission_id);
   if (!current) {
     return err(
       "NOT_FOUND",
@@ -1943,10 +2023,15 @@ async function missionDelete(
   }
 
   return db.transaction(async (tx) => {
+    // Only the cards the caller may see are counted or named (OCL-227). An
+    // admin can put a card of theirs in a member's mission; refusing, or
+    // counting it, would tell the member that card exists. The mission is the
+    // member's to delete, so those cards are detached with the rest and simply
+    // end up with no mission, as `mission_id: null` would leave them.
     const [counted] = await tx
       .select({ n: count() })
       .from(task)
-      .where(eq(task.missionId, current.id));
+      .where(and(eq(task.missionId, current.id), taskScope(principalFromAuth(ctx))));
     const taskCount = Number(counted?.n ?? 0);
 
     if (taskCount > 0 && input.force !== true) {
@@ -1956,12 +2041,10 @@ async function missionDelete(
       );
     }
 
-    if (taskCount > 0) {
-      await tx
-        .update(task)
-        .set({ missionId: null })
-        .where(eq(task.missionId, current.id));
-    }
+    await tx
+      .update(task)
+      .set({ missionId: null })
+      .where(eq(task.missionId, current.id));
     await tx
       .delete(mission)
       .where(
@@ -2233,7 +2316,7 @@ async function missionAttemptStart(
   },
 ) {
   return db.transaction(async (tx) => {
-    const current = await findMission(tx, ctx.workspaceId, input.mission_id);
+    const current = await findMission(tx, ctx, input.mission_id);
     if (!current) {
       return err(
         "NOT_FOUND",
@@ -2250,7 +2333,7 @@ async function missionAttemptStart(
 
     let projectId: string | null = null;
     if (input.project_id !== undefined) {
-      const proj = await findProject(tx, ctx.workspaceId, input.project_id);
+      const proj = await findProject(tx, ctx, input.project_id);
       if (!proj) {
         return err(
           "NOT_FOUND",
@@ -2376,7 +2459,7 @@ async function missionReportUsage(
   }
 
   return db.transaction(async (tx) => {
-    const current = await findMission(tx, ctx.workspaceId, input.mission_id);
+    const current = await findMission(tx, ctx, input.mission_id);
     if (!current) {
       return err(
         "MISSION_ATTEMPT_NOT_FOUND",
@@ -2614,9 +2697,13 @@ async function taskList(
   const offset = input.offset ?? 0;
   const order = input.order ?? "oldest";
   const layers = listLayers(input.include);
-  const filters = [eq(project.workspaceId, ctx.workspaceId)];
+  const filters = [
+    eq(project.workspaceId, ctx.workspaceId),
+    projectScope(principalFromAuth(ctx)),
+    taskScope(principalFromAuth(ctx)),
+  ];
   if (input.project_id) {
-    const proj = await findProject(db, ctx.workspaceId, input.project_id);
+    const proj = await findProject(db, ctx, input.project_id);
     if (!proj) {
       return err(
         "NOT_FOUND",
@@ -2635,9 +2722,9 @@ async function taskList(
     filters.push(eq(task.missionId, input.mission_id));
   }
   if (input.organization) {
-    const org = await findOrganization(db, ctx.workspaceId, input.organization);
+    const org = await findOrganization(db, ctx, input.organization);
     if (!org) {
-      return organizationNotFound(db, ctx.workspaceId, input.organization);
+      return organizationNotFound(db, ctx, input.organization);
     }
     filters.push(eq(project.organizationId, org.id));
   }
@@ -2780,7 +2867,7 @@ async function taskGet(
     delivery_offset?: number;
   },
 ) {
-  const found = await findTask(db, ctx.workspaceId, input.task_id);
+  const found = await findTask(db, ctx, input.task_id);
   if (!found) {
     return err(
       "NOT_FOUND",
@@ -2789,6 +2876,7 @@ async function taskGet(
   }
   const payload = await assembleTaskPayload(
     db,
+    ctx,
     found.row,
     found.proj,
     undefined,
@@ -2871,9 +2959,13 @@ async function taskSearch(
 
   const limit = input.limit ?? 5;
   const layers = listLayers(input.include);
-  const filters = [eq(project.workspaceId, ctx.workspaceId)];
+  const filters = [
+    eq(project.workspaceId, ctx.workspaceId),
+    projectScope(principalFromAuth(ctx)),
+    taskScope(principalFromAuth(ctx)),
+  ];
   if (input.project_id) {
-    const proj = await findProject(db, ctx.workspaceId, input.project_id);
+    const proj = await findProject(db, ctx, input.project_id);
     if (!proj) {
       return err(
         "NOT_FOUND",
@@ -2883,9 +2975,9 @@ async function taskSearch(
     filters.push(eq(task.projectId, proj.id));
   }
   if (input.organization) {
-    const org = await findOrganization(db, ctx.workspaceId, input.organization);
+    const org = await findOrganization(db, ctx, input.organization);
     if (!org) {
-      return organizationNotFound(db, ctx.workspaceId, input.organization);
+      return organizationNotFound(db, ctx, input.organization);
     }
     filters.push(eq(project.organizationId, org.id));
   }
@@ -2984,11 +3076,11 @@ type CardProjectChoice =
  */
 async function resolveCardProject(
   db: Tx,
-  workspaceId: string,
+  ctx: AuthContext,
   input: { project_id?: string; repo?: string },
 ): Promise<CardProjectChoice> {
   if (input.project_id !== undefined) {
-    const row = await findProject(db, workspaceId, input.project_id);
+    const row = await findProject(db, ctx, input.project_id);
     if (!row) {
       return {
         refusal: err(
@@ -3008,7 +3100,13 @@ async function resolveCardProject(
       repoUrl: project.repoUrl,
     })
     .from(project)
-    .where(and(eq(project.workspaceId, workspaceId), isNotNull(project.repoUrl)))
+    .where(
+      and(
+        eq(project.workspaceId, ctx.workspaceId),
+        projectScope(principalFromAuth(ctx)),
+        isNotNull(project.repoUrl),
+      ),
+    )
     .orderBy(asc(project.createdAt));
   const found = resolveProjectByRepo(input.repo ?? "", known);
 
@@ -3044,7 +3142,7 @@ async function resolveCardProject(
     };
   }
 
-  const row = await findProject(db, workspaceId, found.project.id);
+  const row = await findProject(db, ctx, found.project.id);
   if (!row) {
     return {
       refusal: err(
@@ -3097,13 +3195,13 @@ async function taskCreate(
     return?: "ack" | "full";
   },
 ) {
-  const target = await resolveCardProject(db, ctx.workspaceId, input);
+  const target = await resolveCardProject(db, ctx, input);
   if (target.refusal) return target.refusal;
   const proj = target.row;
 
   let missionId: string | null = null;
   if (input.mission) {
-    const miss = await findMission(db, ctx.workspaceId, input.mission);
+    const miss = await findMission(db, ctx, input.mission);
     if (!miss) {
       return err(
         "NOT_FOUND",
@@ -3115,7 +3213,7 @@ async function taskCreate(
 
   let parentRow: TaskRow | null = null;
   if (input.parent) {
-    const parent = await findTask(db, ctx.workspaceId, input.parent);
+    const parent = await findTask(db, ctx, input.parent);
     if (!parent) {
       return err(
         "NOT_FOUND",
@@ -3151,7 +3249,7 @@ async function taskCreate(
 
   return db.transaction(async (tx) => {
     const original = input.supersedes
-      ? await findTask(tx, ctx.workspaceId, input.supersedes, true)
+      ? await findTask(tx, ctx, input.supersedes, true)
       : null;
     if (input.supersedes && !original) {
       return err(
@@ -3215,6 +3313,7 @@ async function taskCreate(
         ...reviewer,
         origin,
         mode: input.mode,
+        createdByUserId: ctx.userId ?? null,
       })
       .returning();
     if (!created) {
@@ -3226,7 +3325,7 @@ async function taskCreate(
         tx,
         original.row,
         created,
-        `superseded by ${created.shortId}`,
+        supersededNote(original.row, created),
       );
       if (!discarded.ok) return discarded;
     }
@@ -3252,6 +3351,7 @@ async function taskCreate(
           ...reviewerToColumns(item.devolve_para ?? input.devolve_para),
           origin,
           mode: "solo",
+          createdByUserId: ctx.userId ?? null,
         })
         .returning();
       if (!child) throw new Error("failed to insert subtask");
@@ -3333,7 +3433,7 @@ async function taskClaim(
   }
 
   const claimed = await db.transaction(async (tx) => {
-    const found = await findTask(tx, ctx.workspaceId, input.task_id, true);
+    const found = await findTask(tx, ctx, input.task_id, true);
     if (!found) {
       return err(
       "NOT_FOUND",
@@ -3523,6 +3623,7 @@ async function taskClaim(
 
   const payload = await assembleTaskPayload(
     db,
+    ctx,
     claimed.value.updated,
     claimed.value.proj,
     claimed.value.reopenComment,
@@ -3556,7 +3657,7 @@ async function taskRelease(
   input: { task_id: string; reason: string; return?: "ack" | "full" },
 ) {
   return db.transaction(async (tx) => {
-    const found = await findTask(tx, ctx.workspaceId, input.task_id, true);
+    const found = await findTask(tx, ctx, input.task_id, true);
     if (!found) {
       return err(
         "NOT_FOUND",
@@ -3569,7 +3670,7 @@ async function taskRelease(
         "Only a card in execution has a claim to release. Call task_get to see its current status.",
       );
     }
-    if (found.row.claimedByTokenId !== ctx.tokenId && !ctx.canManage) {
+    if (found.row.claimedByTokenId !== ctx.tokenId && !canTakeOverClaim(ctx)) {
       return err(
         "PERMISSION_DENIED",
         "Only the token that owns this claim, or a token with manage permission, may release it.",
@@ -3652,7 +3753,7 @@ async function taskHeartbeat(
   input: { task_id: string; return?: "ack" | "full" },
 ) {
   return db.transaction(async (tx) => {
-    const found = await findTask(tx, ctx.workspaceId, input.task_id, true);
+    const found = await findTask(tx, ctx, input.task_id, true);
     if (!found) {
       return err(
         "NOT_FOUND",
@@ -3665,7 +3766,7 @@ async function taskHeartbeat(
         "Only a card in execution has a claim to keep alive.",
       );
     }
-    if (found.row.claimedByTokenId !== ctx.tokenId && !ctx.canManage) {
+    if (found.row.claimedByTokenId !== ctx.tokenId && !canTakeOverClaim(ctx)) {
       return err(
         "PERMISSION_DENIED",
         "Only the token that owns this claim, or a token with manage permission, may heartbeat it.",
@@ -3767,7 +3868,7 @@ async function taskReopen(
   input: { task_id: string; reason: string },
 ) {
   return db.transaction(async (tx) => {
-    const found = await findTask(tx, ctx.workspaceId, input.task_id, true);
+    const found = await findTask(tx, ctx, input.task_id, true);
     if (!found) return err("NOT_FOUND", `Task ${input.task_id} not found in this workspace.`);
     const transition = applyTransition({
       status: found.row.status,
@@ -3820,7 +3921,7 @@ async function taskUpdate(
     return?: "ack" | "full";
   },
 ) {
-  const found = await findTask(db, ctx.workspaceId, input.task_id);
+  const found = await findTask(db, ctx, input.task_id);
   if (!found) {
     return err(
       "NOT_FOUND",
@@ -3829,8 +3930,13 @@ async function taskUpdate(
   }
 
   if (input.status === "validado") {
+    // Validating is the admin's (OCL-227): a member may not sign off on the
+    // card they wrote, whatever flags their token carries.
+    if (!isAdmin(principalFromAuth(ctx))) {
+      return err("PERMISSION_DENIED", "Only an admin can validate a card.");
+    }
     const validated = await db.transaction(async (tx) => {
-      const current = await findTask(tx, ctx.workspaceId, input.task_id, true);
+      const current = await findTask(tx, ctx, input.task_id, true);
       if (!current) {
         return err("NOT_FOUND", `Task ${input.task_id} not found in this workspace.`);
       }
@@ -3881,7 +3987,7 @@ async function taskUpdate(
     const denied = requireManage(ctx, "task_update {status: descartado}");
     if (denied) return denied;
     const discarded = await db.transaction(async (tx) => {
-      const original = await findTask(tx, ctx.workspaceId, input.task_id, true);
+      const original = await findTask(tx, ctx, input.task_id, true);
       if (!original) {
         return err("NOT_FOUND", `Task ${input.task_id} not found in this workspace.`);
       }
@@ -3889,7 +3995,7 @@ async function taskUpdate(
       if (input.superseded_by) {
         const foundContinuation = await findTask(
           tx,
-          ctx.workspaceId,
+          ctx,
           input.superseded_by,
           true,
         );
@@ -3963,7 +4069,7 @@ async function taskUpdate(
         original.row,
         continuation,
         input.comment?.trim() ||
-          (continuation ? `superseded by ${continuation.shortId}` : "discarded"),
+          (continuation ? supersededNote(original.row, continuation) : "discarded"),
       );
     });
     if (!discarded.ok) return discarded;
@@ -3977,7 +4083,7 @@ async function taskUpdate(
   if (input.mission_id !== undefined) {
     let missionId: string | null = null;
     if (input.mission_id !== null) {
-      const miss = await findMission(db, ctx.workspaceId, input.mission_id);
+      const miss = await findMission(db, ctx, input.mission_id);
       if (!miss) {
         return err(
           "NOT_FOUND",
@@ -3993,11 +4099,15 @@ async function taskUpdate(
         .where(eq(task.id, nextRow.id))
         .returning();
       // task_create puts subtasks in the parent's mission. Moving the parent
-      // keeps that true instead of leaving its children behind.
+      // keeps that true instead of leaving its children behind. Only the
+      // children the caller may see follow (OCL-227): an admin's subtask under
+      // a member's card stays where the admin put it, and is never counted.
       const children = await tx
         .update(task)
         .set({ missionId })
-        .where(eq(task.parentId, nextRow.id))
+        .where(
+          and(eq(task.parentId, nextRow.id), taskScope(principalFromAuth(ctx))),
+        )
         .returning({ id: task.id });
       return { updated, children: children.length };
     });
@@ -4012,7 +4122,7 @@ async function taskUpdate(
   let proj = found.proj;
   let projectMove: ProjectMove | null = null;
   if (input.project_id !== undefined) {
-    const dest = await findProject(db, ctx.workspaceId, input.project_id);
+    const dest = await findProject(db, ctx, input.project_id);
     if (!dest) {
       return err(
         "NOT_FOUND",
@@ -4045,11 +4155,24 @@ async function taskUpdate(
         // Subtasks are numbered off their parent (AGB-5.1), so they follow it
         // and get restamped with it. Leaving them behind would orphan them in
         // a project their id does not belong to.
-        const children = await tx
+        const allChildren = await tx
           .select()
           .from(task)
           .where(eq(task.parentId, nextRow.id))
           .orderBy(asc(task.createdAt));
+        // A subtask the caller may not see is not theirs to move, restamp or
+        // name in the answer (OCL-227). It stays in its project under its id
+        // and is detached instead, which is what keeps the rule above: no
+        // subtask lives in a different project than its parent.
+        const principal = principalFromAuth(ctx);
+        const children = allChildren.filter((child) => canSeeTask(principal, child));
+        const hidden = allChildren.filter((child) => !canSeeTask(principal, child));
+        if (hidden.length > 0) {
+          await tx
+            .update(task)
+            .set({ parentId: null })
+            .where(inArray(task.id, hidden.map((child) => child.id)));
+        }
         for (const child of children) {
           const suffix = child.shortId.startsWith(`${previous}.`)
             ? child.shortId.slice(previous.length)
@@ -4454,7 +4577,7 @@ async function taskDeliver(
   // Check the project remote before opening the database transaction. The
   // verifier is advisory by design: a missing commit or a network outage is
   // recorded on the delivery, never turned into a silent rejection.
-  const preview = await findTask(db, ctx.workspaceId, input.task_id);
+  const preview = await findTask(db, ctx, input.task_id);
   if (!preview) {
     return err(
       "NOT_FOUND",
@@ -4478,7 +4601,7 @@ async function taskDeliver(
   }, { githubToken: verificationWorkspace?.githubToken });
 
   const persisted = await db.transaction(async (tx) => {
-    const found = await findTask(tx, ctx.workspaceId, input.task_id, true);
+    const found = await findTask(tx, ctx, input.task_id, true);
     if (!found) {
       return err(
       "NOT_FOUND",
@@ -4840,7 +4963,7 @@ async function taskDelete(
   input: { task_id: string },
 ) {
   return db.transaction(async (tx) => {
-    const found = await findTask(tx, ctx.workspaceId, input.task_id, true);
+    const found = await findTask(tx, ctx, input.task_id, true);
     if (!found) {
       return err(
       "NOT_FOUND",
@@ -4848,10 +4971,22 @@ async function taskDelete(
     );
     }
 
-    const children = await tx
-      .select({ id: task.id })
+    const allChildren = await tx
+      .select({ id: task.id, createdByUserId: task.createdByUserId })
       .from(task)
       .where(eq(task.parentId, found.row.id));
+    // A subtask the caller may not see is someone else's card (OCL-227): an
+    // admin can open one under a member's card. It is detached before the
+    // delete, so the cascade cannot take it, and it is left out of the counts.
+    const principal = principalFromAuth(ctx);
+    const children = allChildren.filter((child) => canSeeTask(principal, child));
+    const hidden = allChildren.filter((child) => !canSeeTask(principal, child));
+    if (hidden.length > 0) {
+      await tx
+        .update(task)
+        .set({ parentId: null })
+        .where(inArray(task.id, hidden.map((child) => child.id)));
+    }
     const ids = [found.row.id, ...children.map((child) => child.id)];
 
     const [attempts] = await tx
@@ -4882,7 +5017,7 @@ async function branchRegister(
   ctx: AuthContext,
   input: { task_id: string; branch: string },
 ) {
-  const found = await findTask(db, ctx.workspaceId, input.task_id);
+  const found = await findTask(db, ctx, input.task_id);
   if (!found) {
     return err(
       "NOT_FOUND",
@@ -4935,9 +5070,9 @@ async function insightsQuery(
   const pricingEnabled = ws?.pricingEnabled ?? false;
 
   const [attemptRows, missionAttemptRows, reopenRows, prices] = await Promise.all([
-    loadInsightAttemptRows(db as InsightsDb, ctx.workspaceId),
-    loadMissionAttemptRows(db as InsightsDb, ctx.workspaceId),
-    loadReopenRows(db as InsightsDb, ctx.workspaceId),
+    loadInsightAttemptRows(db as InsightsDb, ctx.workspaceId, principalFromAuth(ctx)),
+    loadMissionAttemptRows(db as InsightsDb, ctx.workspaceId, principalFromAuth(ctx)),
+    loadReopenRows(db as InsightsDb, ctx.workspaceId, principalFromAuth(ctx)),
     pricingEnabled
       ? loadModelPrices(db as PricesDb, ctx.workspaceId)
       : Promise.resolve([]),
@@ -5166,11 +5301,44 @@ async function executorsUpdate(
   );
 }
 
+/** Organizations and projects are the admin's to create, edit and delete. */
+function requireStructure(ctx: AuthContext, tool: string): Result<never> | null {
+  if (canManageStructure(principalFromAuth(ctx))) return null;
+  return err(
+    "PERMISSION_DENIED",
+    `${tool} is not available to this token: projects and organizations are managed by an admin.`,
+  );
+}
+
+/**
+ * Whether the caller may release or keep alive a claim another token holds.
+ * The same rule as `requireManage` (OCL-227): the manage flag on a member's
+ * token must not let them free, or hold on to, a claim the admin took on one
+ * of their cards.
+ */
+function canTakeOverClaim(ctx: AuthContext): boolean {
+  return ctx.canManage === true && canManageWorkspace(principalFromAuth(ctx));
+}
+
+/**
+ * The note left on the attempt a continuation cuts short. It names the
+ * continuation only when both cards have the same author (OCL-227): an admin
+ * can continue a member's card, and the member's card must not carry the id of
+ * a card they cannot see. The admin still reaches it through `superseded_by`.
+ */
+function supersededNote(original: TaskRow, continuation: TaskRow): string {
+  return original.createdByUserId === continuation.createdByUserId
+    ? `superseded by ${continuation.shortId}`
+    : "superseded by another card";
+}
+
 function requireManage(
   ctx: AuthContext,
   tool: string,
 ): Result<never> | null {
-  if (ctx.canManage) return null;
+  // A token flag never widens what its owner may do: workspace configuration
+  // stays with admins even if a member's token was ticked "can manage".
+  if (ctx.canManage && canManageWorkspace(principalFromAuth(ctx))) return null;
   return err("PERMISSION_DENIED", manageDenialMessage(tool, ctx.tokenLabel));
 }
 
@@ -5209,6 +5377,8 @@ async function cardExecutorFor(
 
 async function assembleTaskPayload(
   db: McpDatabase,
+  /** Who is reading: the card's mission is shown only when they may see it. */
+  ctx: AuthContext,
   row: TaskRow,
   proj: ProjectRow,
   reopenComment?: string | null,
@@ -5263,7 +5433,10 @@ async function assembleTaskPayload(
     : null;
   let missionPayload = null;
   if (wantsMission && row.missionId) {
-    const miss = await findMission(db, proj.workspaceId, row.missionId);
+    // As the reader, not the workspace (OCL-227): an admin may put a member's
+    // card in one of their missions, and that mission's objective and context
+    // are still the admin's. Out of scope, the card reads as mission-less.
+    const miss = await findMission(db, ctx, row.missionId);
     if (miss) {
       const missOrg = await organizationOf(
         db,
@@ -5560,7 +5733,7 @@ async function listTaskComments(
  */
 async function findProject(
   db: Tx,
-  workspaceId: string,
+  ctx: AuthContext,
   projectRef: string,
   lock = false,
 ): Promise<ProjectRow | null> {
@@ -5573,7 +5746,13 @@ async function findProject(
   const query = db
     .select()
     .from(project)
-    .where(and(eq(project.workspaceId, workspaceId), identity))
+    .where(
+      and(
+        eq(project.workspaceId, ctx.workspaceId),
+        projectScope(principalFromAuth(ctx)),
+        identity,
+      ),
+    )
     .limit(1);
   const rows = lock ? await query.for("update") : await query;
   const row = rows[0];
@@ -5582,7 +5761,7 @@ async function findProject(
 
 async function findMission(
   db: Tx,
-  workspaceId: string,
+  ctx: AuthContext,
   missionRef: string,
   lock = false,
 ) {
@@ -5595,7 +5774,13 @@ async function findMission(
   const query = db
     .select()
     .from(mission)
-    .where(and(eq(mission.workspaceId, workspaceId), eq(mission.id, missionRef)))
+    .where(
+      and(
+        eq(mission.workspaceId, ctx.workspaceId),
+        missionScope(principalFromAuth(ctx)),
+        eq(mission.id, missionRef),
+      ),
+    )
     .limit(1);
   const rows = lock ? await query.for("update") : await query;
   const row = rows[0];
@@ -5604,7 +5789,7 @@ async function findMission(
 
 async function findTask(
   db: Tx,
-  workspaceId: string,
+  ctx: AuthContext,
   taskRef: string,
   lock = false,
 ): Promise<{ row: TaskRow; proj: ProjectRow } | null> {
@@ -5619,7 +5804,14 @@ async function findTask(
     .select({ task, project })
     .from(task)
     .innerJoin(project, eq(task.projectId, project.id))
-    .where(and(eq(project.workspaceId, workspaceId), identity))
+    .where(
+      and(
+        eq(project.workspaceId, ctx.workspaceId),
+        projectScope(principalFromAuth(ctx)),
+        taskScope(principalFromAuth(ctx)),
+        identity,
+      ),
+    )
     .limit(1);
 
   const rows = lock

@@ -1,4 +1,4 @@
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { redirect } from "next/navigation";
 import { mission, project } from "@agent-board/db";
 import { Icon } from "../../components/icon";
@@ -10,6 +10,8 @@ import {
   filterBoardCards,
 } from "../../lib/board-filter";
 import { getSession } from "../../lib/cookies";
+import { missionScope, projectScope } from "../../lib/scope";
+import { pagePrincipal } from "../../lib/web-scope";
 import { dict } from "../../lib/i18n";
 import { db } from "../../lib/db";
 import {
@@ -484,6 +486,7 @@ export default async function InsightsPage({
 }) {
   const session = await getSession();
   if (!session) redirect("/login");
+  const principal = await pagePrincipal(session);
 
   const ws = await db().query.workspace.findFirst();
   if (!ws) redirect("/setup");
@@ -491,9 +494,9 @@ export default async function InsightsPage({
   // No price table to read when the money layer is off: there is nothing on
   // this page for it to fill.
   const [attemptRows, missionAttemptRows, reopenRows, prices, params] = await Promise.all([
-    loadInsightAttemptRows(db(), ws.id),
-    loadMissionAttemptRows(db(), ws.id),
-    loadReopenRows(db(), ws.id),
+    loadInsightAttemptRows(db(), ws.id, principal),
+    loadMissionAttemptRows(db(), ws.id, principal),
+    loadReopenRows(db(), ws.id, principal),
     ws.pricingEnabled ? loadModelPrices(db(), ws.id) : Promise.resolve([]),
     searchParams,
   ]);
@@ -504,12 +507,12 @@ export default async function InsightsPage({
     db()
       .select({ id: project.id })
       .from(project)
-      .where(eq(project.workspaceId, ws.id))
+      .where(and(eq(project.workspaceId, ws.id), projectScope(principal)))
       .orderBy(asc(project.createdAt)),
     db()
       .select({ id: mission.id })
       .from(mission)
-      .where(eq(mission.workspaceId, ws.id)),
+      .where(and(eq(mission.workspaceId, ws.id), missionScope(principal))),
   ]);
   const t = insightsCopy(ws.language);
   // The wordmark is shared chrome, so its label comes from the shared

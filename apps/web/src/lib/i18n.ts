@@ -17,6 +17,12 @@ const en = {
   /** The locale the formatters (lib/format.ts) read off any dict in hand. */
   lang: "en" as Lang,
   board: {
+    /** Home notice for the admin (OCL-222): a member's install worked. */
+    memberInstalled: (emails: string[]) =>
+      emails.length === 1
+        ? `${emails[0]} finished installing: their agent reached the board.`
+        : `${emails.length} members finished installing: ${emails.join(", ")}.`,
+    memberInstalledLink: "See the team",
     /**
      * The wordmark is a link home now, and its accessible name has to say so:
      * "overclick" alone tells a screen reader the brand, not the destination.
@@ -372,6 +378,32 @@ const en = {
     tabProjects: "Projects",
     tabTokens: "MCP tokens",
     tabClaims: "Claim timeout",
+    tabTeam: "Team",
+    teamSub:
+      "Invite a person into one organization. They join as a member: they see and change only the cards and missions they create, and the projects of that organization.",
+    teamInviteCap: "New invitation",
+    teamInviteEmail: "Email",
+    teamInviteOrganization: "Organization",
+    teamInviteBtn: "Create invitation link",
+    teamInviteLink: "Invitation link — single use, shown only now",
+    teamInviteExpires: (date: string) => `Valid until ${date}.`,
+    teamPendingCap: "Pending invitations",
+    teamPendingEmpty: "No invitation waiting.",
+    teamWithdraw: "Withdraw",
+    teamWithdrawn: "Invitation withdrawn.",
+    teamPeopleCap: "People",
+    teamRoleAdmin: "admin",
+    teamRoleMember: "member",
+    teamActive: "active",
+    teamRegistered: "registered, not installed yet",
+    teamInstalled: (date: string) => `installed ${date}`,
+    teamInactive: "deactivated",
+    teamTokens: (n: number) => `${n} token${n === 1 ? "" : "s"}`,
+    teamDeactivate: "Deactivate",
+    teamReactivate: "Reactivate",
+    teamDeactivated: "Member deactivated. Their session and tokens stop working now.",
+    teamReactivated: "Member reactivated.",
+    teamNoOrganizations: "Create an organization first: every member belongs to one.",
     tabLanguage: "Language",
     tabPrices: "Cost (optional)",
     organizationsSub:
@@ -625,7 +657,7 @@ const en = {
     setupSub:
       "Create this instance's admin account. It lives in your database, nothing leaves this server.",
     loginTitle: "Welcome back.",
-    loginSub: "Sign in with this local instance's admin account.",
+    loginSub: "Sign in with your account on this local instance.",
     email: "Email",
     password: "Password",
     confirmPassword: "Confirm password",
@@ -645,6 +677,21 @@ const en = {
       "This instance already has an admin. Sign in with the existing account.",
     errCreate: "Could not create the account.",
     errCredentials: "Invalid email or password.",
+    /** The invitation page (OCL-222): a person an admin invited sets a password. */
+    inviteTitle: "You were invited.",
+    inviteSub: (email: string, organization: string) =>
+      `Set a password for ${email} to join ${organization} on this board.`,
+    inviteAccept: "Set password and enter",
+    inviteAccepting: "Entering…",
+    inviteRefusedTitle: "This invitation cannot be used.",
+    inviteToLogin: "Go to sign in",
+    inviteRefused: {
+      invalid: "This invitation link is not valid. Ask the admin for a new one.",
+      used: "This invitation was already used. Sign in with the account it created.",
+      expired: "This invitation expired. Ask the admin for a new one.",
+      revoked: "This invitation was withdrawn by the admin.",
+      email_taken: "That email already has an account here. Sign in instead.",
+    },
   },
 };
 
@@ -653,6 +700,11 @@ export type Dict = typeof en;
 const ptBR: Dict = {
   lang: "pt-BR" as Lang,
   board: {
+    memberInstalled: (emails: string[]) =>
+      emails.length === 1
+        ? `${emails[0]} concluiu a instalação: o agente dele chegou ao board.`
+        : `${emails.length} members concluíram a instalação: ${emails.join(", ")}.`,
+    memberInstalledLink: "Ver a equipe",
     homeLink: "overclick, ir para o board",
     colOpen: "Aberto",
     colInProgress: "Em execução",
@@ -945,6 +997,32 @@ const ptBR: Dict = {
     tabProjects: "Projetos",
     tabTokens: "Tokens MCP",
     tabClaims: "Timeout de claim",
+    tabTeam: "Equipe",
+    teamSub:
+      "Convide uma pessoa para uma organização. Ela entra como member: vê e altera só os cards e missões que criar, e os projetos daquela organização.",
+    teamInviteCap: "Novo convite",
+    teamInviteEmail: "Email",
+    teamInviteOrganization: "Organização",
+    teamInviteBtn: "Gerar link de convite",
+    teamInviteLink: "Link de convite — uso único, aparece só agora",
+    teamInviteExpires: (date: string) => `Vale até ${date}.`,
+    teamPendingCap: "Convites pendentes",
+    teamPendingEmpty: "Nenhum convite esperando.",
+    teamWithdraw: "Retirar",
+    teamWithdrawn: "Convite retirado.",
+    teamPeopleCap: "Pessoas",
+    teamRoleAdmin: "admin",
+    teamRoleMember: "member",
+    teamActive: "ativo",
+    teamRegistered: "cadastrado, ainda sem instalar",
+    teamInstalled: (date: string) => `instalado em ${date}`,
+    teamInactive: "desativado",
+    teamTokens: (n: number) => `${n} token${n === 1 ? "" : "s"}`,
+    teamDeactivate: "Desativar",
+    teamReactivate: "Reativar",
+    teamDeactivated: "Member desativado. A sessão e os tokens dele param de funcionar agora.",
+    teamReactivated: "Member reativado.",
+    teamNoOrganizations: "Crie uma organização antes: todo member pertence a uma.",
     tabLanguage: "Idioma",
     tabPrices: "Custo (opcional)",
     organizationsSub:
@@ -1187,7 +1265,7 @@ const ptBR: Dict = {
     setupSub:
       "Crie a conta admin desta instância. Ela mora no seu banco de dados, nada sai deste servidor.",
     loginTitle: "Bem-vindo de volta.",
-    loginSub: "Entre com a conta admin desta instância local.",
+    loginSub: "Entre com a sua conta nesta instância local.",
     email: "Email",
     password: "Senha",
     confirmPassword: "Confirmar senha",
@@ -1204,6 +1282,20 @@ const ptBR: Dict = {
       "Esta instância já tem um admin. Entre com a conta existente.",
     errCreate: "Não foi possível criar a conta.",
     errCredentials: "Email ou senha inválidos.",
+    inviteTitle: "Você foi convidado.",
+    inviteSub: (email: string, organization: string) =>
+      `Defina uma senha para ${email} e entre em ${organization} neste board.`,
+    inviteAccept: "Definir senha e entrar",
+    inviteAccepting: "Entrando…",
+    inviteRefusedTitle: "Este convite não pode ser usado.",
+    inviteToLogin: "Ir para o login",
+    inviteRefused: {
+      invalid: "Este link de convite não é válido. Peça um novo ao admin.",
+      used: "Este convite já foi usado. Entre com a conta que ele criou.",
+      expired: "Este convite expirou. Peça um novo ao admin.",
+      revoked: "Este convite foi retirado pelo admin.",
+      email_taken: "Esse email já tem conta aqui. Entre com ela.",
+    },
   },
 };
 

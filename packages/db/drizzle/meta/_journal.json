@@ -288,6 +288,20 @@
       "when": 1789790620765,
       "tag": "0040_task_reopen_reports",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1790264319235,
+      "tag": "0041_identity_scope",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1790265884294,
+      "tag": "0042_invitation",
+      "breakpoints": true
     }
   ]
 }

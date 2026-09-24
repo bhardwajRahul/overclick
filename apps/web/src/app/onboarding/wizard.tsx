@@ -46,10 +46,16 @@ export function Wizard({
   project,
   executors,
   lang,
+  installOnly = false,
 }: {
   host: string;
   origin: string;
   initialStep: number;
+  /**
+   * A member's wizard (OCL-222): only the install step, since the project and
+   * the executors are the admin's. The pairing it offers mints their token.
+   */
+  installOnly?: boolean;
   project: ProjectData | null;
   executors: ExecutorSelection;
   lang: string;
@@ -225,9 +231,12 @@ export function Wizard({
               single column it always was. */}
           <div className="wiz-body">
             <ol className="steps-ind">
-              {[t.wizard.stepProject, t.wizard.stepExecutors, t.wizard.stepAgent].map(
+              {(installOnly
+                ? [t.wizard.stepAgent]
+                : [t.wizard.stepProject, t.wizard.stepExecutors, t.wizard.stepAgent]
+              ).map(
                 (stepLabel, i) => {
-                  const n = i + 1;
+                  const n = installOnly ? 3 : i + 1;
                   return (
                     <li
                       key={stepLabel}
@@ -243,6 +252,7 @@ export function Wizard({
             </ol>
             <div className="wiz-steps">
 
+            {installOnly ? null : (<>
             {/* T1: project */}
             <div className={`wstep${step === 1 ? " active" : ""}`}>
               <h2>{t.wizard.t1Title}</h2>
@@ -316,6 +326,7 @@ export function Wizard({
                 <b>{t.wizard.t2HintStrong}</b> {t.wizard.t2Hint}
               </div>
             </div>
+            </>)}
 
             {/* T3: connect the agent */}
             <div className={`wstep${step === 3 ? " active" : ""}`}>
@@ -422,23 +433,25 @@ export function Wizard({
             <div
               className="progress"
               role="progressbar"
-              aria-valuenow={step}
+              aria-valuenow={installOnly ? 1 : step}
               aria-valuemin={1}
-              aria-valuemax={3}
+              aria-valuemax={installOnly ? 1 : 3}
             >
               {/* three of three is the whole bar; step * 33 stopped at 99% and
                   left a sliver of the last step forever unfinished */}
-              <i style={{ width: `${(step / 3) * 100}%` }} />
+              <i style={{ width: `${installOnly ? 100 : (step / 3) * 100}%` }} />
             </div>
             <div className="wbtns">
               {/* The two directions of the wizard were punctuation inside the
                   label, which is a chevron only if the font agrees. They are
                   the set's own here, and silent: the word beside each one is
                   the accessible name already. */}
+              {installOnly ? <span /> : (
               <button className="btn-back" disabled={step === 1 || pending} onClick={() => setStep(step - 1)}>
                 <Icon name="chevronLeft" label={null} size={13} />
                 {t.wizard.back}
               </button>
+              )}
               <div className="wbtns-end">
                 {step === 3 ? (
                   <button

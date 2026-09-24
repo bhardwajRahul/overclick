@@ -50,6 +50,41 @@ function pairingFailureScope(origin?: string | null): string {
   return `origin:${named || "unknown"}`;
 }
 
+/**
+ * Codes one person may generate inside a window (OCL-227).
+ *
+ * Generating a code reopens the guessing budget of the origin that asked for
+ * it (see `createPairingCode`). With one user that was only ever the honest
+ * human; with members, the person generating can be the one guessing, so each
+ * generation would buy a fresh round of guesses. Capping generations per user
+ * bounds that: at most this many resets, each worth `MAX_PAIRING_FAILURES`
+ * guesses, per window. Generating is a click, so five covers a human who
+ * mistyped the label or let a code expire.
+ */
+export const MAX_PAIRING_CODES_PER_USER = 5;
+
+/**
+ * The generation budget lives in the same table as the guessing one, under a
+ * prefix no origin can produce, the way `login_failure` keeps two kinds apart.
+ */
+function pairingGenerationScope(userId: string): string {
+  return `generate:user:${userId}`;
+}
+
+/** Spends one code generation for the user; false once the window is spent. */
+export async function spendPairingGeneration(
+  db: McpDatabase,
+  userId: string,
+): Promise<boolean> {
+  return spendBudget(
+    db,
+    pairingFailure,
+    pairingGenerationScope(userId),
+    MAX_PAIRING_CODES_PER_USER,
+    PAIRING_CODE_TTL_MS,
+  );
+}
+
 export function generatePairingCode(): string {
   return String(randomInt(0, 1_000_000)).padStart(6, "0");
 }
@@ -108,29 +143,42 @@ async function clearAttempts(db: McpDatabase, scope: string): Promise<void> {
 
 export async function createPairingCode(
   db: McpDatabase,
-  input: { workspaceId: string; label: string; userId?: string },
+  input: {
+    workspaceId: string;
+    label: string;
+    userId?: string;
+    /** Where the human asking for the code is, as `/api/pair` would name it. */
+    origin?: string | null;
+  },
 ): Promise<{ id: string; code: string; expiresAt: Date }> {
   const code = generatePairingCode();
   const expiresAt = new Date(Date.now() + PAIRING_CODE_TTL_MS);
 
-  // One active code per workspace: a new code replaces any unconsumed one,
-  // which also keeps the guessing space at a single live code.
+  // One active code per person: a new code replaces any unconsumed one of
+  // theirs, which keeps the guessing space at one live code per signed-in
+  // human. Scoped to the author (OCL-222) so a member pairing an agent cannot
+  // cancel the code the admin is reading out at the same time.
   await db
     .delete(pairingCode)
     .where(
       and(
         eq(pairingCode.workspaceId, input.workspaceId),
         isNull(pairingCode.consumedAt),
+        input.userId
+          ? eq(pairingCode.createdByUserId, input.userId)
+          : isNull(pairingCode.createdByUserId),
       ),
     );
 
   // Generating a code is a signed-in human saying "I am here now", and it
   // is what reopens a drained bucket. Without this a guesser could leave
   // the endpoint refusing the very attempt the legitimate agent is about
-  // to make. What it costs is bounded and small: at most the budget's worth
-  // of evaluated guesses per origin against a brand new number out of a
-  // million, and the guesser cannot trigger it — only the human can.
-  await db.delete(pairingFailure);
+  // to make. Only the bucket of the origin asking is reopened (OCL-227):
+  // clearing every bucket let a member, who is a signed-in human too, wipe
+  // the budget of the origin guessing at the admin's live code as often as
+  // they liked. Their own origin is still reopened, and the per-user cap on
+  // generations (`spendPairingGeneration`) bounds how often.
+  await db.delete(pairingFailure).where(eq(pairingFailure.id, pairingFailureScope(input.origin)));
 
   const [row] = await db
     .insert(pairingCode)
@@ -232,6 +280,7 @@ export async function exchangePairingCode(
         label,
         hash: hashToken(secret),
         tokenPrefix: secret.slice(0, 12),
+        ownerUserId: consumed.createdByUserId,
         createdByUserId: consumed.createdByUserId,
       })
       .returning({ id: mcpToken.id });
@@ -250,15 +299,20 @@ export async function exchangePairingCode(
   return result;
 }
 
-/** Wizard polling: paired once the code was exchanged. */
+/**
+ * Wizard polling: paired once the code was exchanged. Only the person who
+ * generated the code may ask (OCL-227); anyone else's pairing reads as never
+ * paired, the same answer an unknown id gets.
+ */
 export async function pairingStatus(
   db: McpDatabase,
   id: string,
+  userId: string,
 ): Promise<{ paired: boolean }> {
   const [row] = await db
     .select({ consumedAt: pairingCode.consumedAt })
     .from(pairingCode)
-    .where(eq(pairingCode.id, id))
+    .where(and(eq(pairingCode.id, id), eq(pairingCode.createdByUserId, userId)))
     .limit(1);
   return { paired: row?.consumedAt != null };
 }

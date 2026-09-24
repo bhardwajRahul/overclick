@@ -5,9 +5,22 @@ import { and, desc, eq, isNotNull } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { getSession } from "../lib/cookies";
 import { db } from "../lib/db";
-import { createPairingCode, pairingStatus } from "../lib/pairing";
+import { loginOrigin } from "../lib/login-rate-limit";
+import {
+  createPairingCode,
+  pairingStatus,
+  spendPairingGeneration,
+} from "../lib/pairing";
+import { looksLikeUuid } from "../mcp/map";
 import { generateTokenSecret, hashToken } from "../mcp/token";
 import type { ActionResult } from "../lib/action-result";
+import { isAdmin, type Principal } from "../lib/scope";
+import { ADMIN_ONLY, sessionPrincipal } from "../lib/web-scope";
+
+/** Tokens the principal may see and manage: an admin any, a member only theirs. */
+function ownTokens(principal: Principal) {
+  return isAdmin(principal) ? undefined : eq(mcpToken.ownerUserId, principal.userId);
+}
 
 export type CreateTokenResult =
   | { ok: true; id: string; secret: string }
@@ -24,6 +37,10 @@ export async function createTokenAction(
 ): Promise<CreateTokenResult> {
   const session = await getSession();
   if (!session) return { ok: false, error: "Session expired. Sign in again." };
+  const principal = await sessionPrincipal(session);
+  if (!principal) return { ok: false, error: "Session expired. Sign in again." };
+  // The manage flag opens the workspace configuration over MCP: the admin's.
+  if (canManage && !isAdmin(principal)) return { ok: false, error: ADMIN_ONLY };
 
   const ws = await db().query.workspace.findFirst();
   if (!ws) return { ok: false, error: "Workspace not found." };
@@ -41,6 +58,7 @@ export async function createTokenAction(
         hash: hashToken(secret),
         tokenPrefix: secret.slice(0, 12),
         canManage,
+        ownerUserId: session.userId,
         createdByUserId: session.userId,
       })
       .returning({ id: mcpToken.id });
@@ -67,6 +85,7 @@ export async function setTokenManageAction(
 ): Promise<ActionResult> {
   const session = await getSession();
   if (!session) return { ok: false, error: "Session expired. Sign in again." };
+  if (!isAdmin(await sessionPrincipal(session))) return { ok: false, error: ADMIN_ONLY };
 
   const ws = await db().query.workspace.findFirst();
   if (!ws) return { ok: false, error: "Workspace not found." };
@@ -91,14 +110,25 @@ export async function setTokenManageAction(
 export async function revokeTokenAction(tokenId: string): Promise<ActionResult> {
   const session = await getSession();
   if (!session) return { ok: false, error: "Session expired. Sign in again." };
+  const principal = await sessionPrincipal(session);
+  if (!principal) return { ok: false, error: "Session expired. Sign in again." };
 
   const ws = await db().query.workspace.findFirst();
   if (!ws) return { ok: false, error: "Workspace not found." };
 
-  await db()
+  // Someone else's token is "not found" to a member, never "forbidden".
+  const [row] = await db()
     .update(mcpToken)
     .set({ revoked: true, revokedAt: new Date() })
-    .where(and(eq(mcpToken.id, tokenId), eq(mcpToken.workspaceId, ws.id)));
+    .where(
+      and(
+        eq(mcpToken.id, tokenId),
+        eq(mcpToken.workspaceId, ws.id),
+        ownTokens(principal),
+      ),
+    )
+    .returning({ id: mcpToken.id });
+  if (!row) return { ok: false, error: "Token not found." };
   revalidatePath("/settings");
   return { ok: true };
 }
@@ -117,14 +147,27 @@ export async function createPairingCodeAction(
 ): Promise<CreatePairingResult> {
   const session = await getSession();
   if (!session) return { ok: false, error: "Session expired. Sign in again." };
+  if (!(await sessionPrincipal(session))) {
+    return { ok: false, error: "Session expired. Sign in again." };
+  }
 
   const ws = await db().query.workspace.findFirst();
   if (!ws) return { ok: false, error: "Workspace not found." };
+
+  // Each code reopens the guessing budget of the origin asking for it, so how
+  // many a person may generate is what bounds the guesses they can buy.
+  if (!(await spendPairingGeneration(db(), session.userId))) {
+    return {
+      ok: false,
+      error: "Too many pairing codes in the last few minutes. Wait a little and generate a new one.",
+    };
+  }
 
   const created = await createPairingCode(db(), {
     workspaceId: ws.id,
     label: label.trim() || "paired agent",
     userId: session.userId,
+    origin: await loginOrigin(),
   });
   return {
     ok: true,
@@ -137,8 +180,8 @@ export async function createPairingCodeAction(
 /** Wizard polling for the pairing path: lit once the code was exchanged. */
 export async function pollPairingAction(id: string): Promise<{ paired: boolean }> {
   const session = await getSession();
-  if (!session) return { paired: false };
-  return pairingStatus(db(), id);
+  if (!session || !looksLikeUuid(id)) return { paired: false };
+  return pairingStatus(db(), id, session.userId);
 }
 
 /** Polling for the "waiting for the first connection" indicator (wizard T3). */
@@ -147,9 +190,11 @@ export async function pollTokenAction(
 ): Promise<{ used: boolean; usedAt: string | null }> {
   const session = await getSession();
   if (!session) return { used: false, usedAt: null };
+  const principal = await sessionPrincipal(session);
+  if (!principal) return { used: false, usedAt: null };
 
   const row = await db().query.mcpToken.findFirst({
-    where: eq(mcpToken.id, tokenId),
+    where: and(eq(mcpToken.id, tokenId), ownTokens(principal)),
     columns: { lastUsedAt: true },
   });
   return {
@@ -171,11 +216,14 @@ export async function workspaceEverConnectedAction(): Promise<{
 }> {
   const session = await getSession();
   if (!session) return { connected: false, at: null };
+  const principal = await sessionPrincipal(session);
+  if (!principal) return { connected: false, at: null };
 
+  // A member asks about their own agents, not the admin's.
   const rows = await db()
     .select({ lastUsedAt: mcpToken.lastUsedAt })
     .from(mcpToken)
-    .where(isNotNull(mcpToken.lastUsedAt))
+    .where(and(isNotNull(mcpToken.lastUsedAt), ownTokens(principal)))
     .orderBy(desc(mcpToken.lastUsedAt))
     .limit(1);
 

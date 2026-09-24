@@ -6,12 +6,29 @@ import {
   taskComment,
   type ValidationTick,
 } from "@agent-board/db";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { getSession } from "../lib/cookies";
 import { db } from "../lib/db";
+import { isAdmin, taskScope } from "../lib/scope";
+import { sessionPrincipal } from "../lib/web-scope";
 import { parseComoConfirmo } from "../mcp/map";
 import type { ActionResult } from "../lib/action-result";
+
+/**
+ * The card, only when this session may see it. Out of scope reads exactly like
+ * a card that does not exist, so a member cannot tell theirs from the admin's.
+ */
+async function findScopedTask(session: { userId: string }, taskId: string) {
+  const principal = await sessionPrincipal(session);
+  if (!principal) return undefined;
+  return db().query.task.findFirst({
+    where: and(eq(task.id, taskId), taskScope(principal)),
+  });
+}
+
+/** What a member hears when trying to validate or desvalidate (OCL-227). */
+const VALIDATION_ADMIN_ONLY = "Only an admin can validate a card.";
 
 /**
  * Ticks or unticks one How-to-confirm step of a done card, recording who and
@@ -25,7 +42,7 @@ export async function tickValidationStepAction(
   const session = await getSession();
   if (!session) return { ok: false, error: "Session expired. Sign in again." };
 
-  const row = await db().query.task.findFirst({ where: eq(task.id, taskId) });
+  const row = await findScopedTask(session, taskId);
   if (!row) return { ok: false, error: "Card not found." };
   if (row.status !== "feito") {
     return { ok: false, error: "You can only check steps on a card in done." };
@@ -63,8 +80,13 @@ export async function validateTaskAction(
   const session = await getSession();
   if (!session) return { ok: false, error: "Session expired. Sign in again." };
 
-  const row = await db().query.task.findFirst({ where: eq(task.id, taskId) });
+  const row = await findScopedTask(session, taskId);
   if (!row) return { ok: false, error: "Card not found." };
+  // The card is theirs, so refusing says nothing new; validating stays the
+  // admin's.
+  if (!isAdmin(await sessionPrincipal(session))) {
+    return { ok: false, error: VALIDATION_ADMIN_ONLY };
+  }
   if (!canTransition(row.status, "validado", "human")) {
     return { ok: false, error: "You can only validate a card that is in done." };
   }
@@ -98,8 +120,11 @@ export async function unvalidateTaskAction(taskId: string): Promise<ActionResult
   const session = await getSession();
   if (!session) return { ok: false, error: "Session expired. Sign in again." };
 
-  const row = await db().query.task.findFirst({ where: eq(task.id, taskId) });
+  const row = await findScopedTask(session, taskId);
   if (!row) return { ok: false, error: "Card not found." };
+  if (!isAdmin(await sessionPrincipal(session))) {
+    return { ok: false, error: VALIDATION_ADMIN_ONLY };
+  }
   if (!canTransition(row.status, "feito", "human")) {
     return { ok: false, error: "You can only desvalidate a card that is validated." };
   }
@@ -138,7 +163,7 @@ export async function answerOpenTaskAction(
     return { ok: false, error: "Write an answer before sending." };
   }
 
-  const row = await db().query.task.findFirst({ where: eq(task.id, taskId) });
+  const row = await findScopedTask(session, taskId);
   if (!row) return { ok: false, error: "Card not found." };
   if (row.status !== "aberto") {
     return { ok: false, error: "You can only answer a card that is open." };
@@ -169,7 +194,7 @@ export async function reopenTaskAction(
     return { ok: false, error: "Describe what's missing. The agent reads it on its next claim." };
   }
 
-  const row = await db().query.task.findFirst({ where: eq(task.id, taskId) });
+  const row = await findScopedTask(session, taskId);
   if (!row) return { ok: false, error: "Card not found." };
   if (!canTransition(row.status, "aberto", "human", { hasComment: true })) {
     return { ok: false, error: "You can only reopen a card that is in done." };

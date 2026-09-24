@@ -22,6 +22,7 @@ export { executionAttempt } from "./execution-attempt";
 export { handoff } from "./handoff";
 export { mcpToken } from "./mcp-token";
 export { pairingCode } from "./pairing-code";
+export { invitation } from "./invitation";
 export { pairingFailure } from "./pairing-failure";
 export { loginFailure } from "./login-failure";
 export { cardapioEntry } from "./cardapio-entry";
