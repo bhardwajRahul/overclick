@@ -5,7 +5,13 @@ import { and, desc, eq, isNotNull } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { getSession } from "../lib/cookies";
 import { db } from "../lib/db";
-import { createPairingCode, pairingStatus } from "../lib/pairing";
+import { loginOrigin } from "../lib/login-rate-limit";
+import {
+  createPairingCode,
+  pairingStatus,
+  spendPairingGeneration,
+} from "../lib/pairing";
+import { looksLikeUuid } from "../mcp/map";
 import { generateTokenSecret, hashToken } from "../mcp/token";
 import type { ActionResult } from "../lib/action-result";
 import { isAdmin, type Principal } from "../lib/scope";
@@ -141,14 +147,27 @@ export async function createPairingCodeAction(
 ): Promise<CreatePairingResult> {
   const session = await getSession();
   if (!session) return { ok: false, error: "Session expired. Sign in again." };
+  if (!(await sessionPrincipal(session))) {
+    return { ok: false, error: "Session expired. Sign in again." };
+  }
 
   const ws = await db().query.workspace.findFirst();
   if (!ws) return { ok: false, error: "Workspace not found." };
+
+  // Each code reopens the guessing budget of the origin asking for it, so how
+  // many a person may generate is what bounds the guesses they can buy.
+  if (!(await spendPairingGeneration(db(), session.userId))) {
+    return {
+      ok: false,
+      error: "Too many pairing codes in the last few minutes. Wait a little and generate a new one.",
+    };
+  }
 
   const created = await createPairingCode(db(), {
     workspaceId: ws.id,
     label: label.trim() || "paired agent",
     userId: session.userId,
+    origin: await loginOrigin(),
   });
   return {
     ok: true,
@@ -161,8 +180,8 @@ export async function createPairingCodeAction(
 /** Wizard polling for the pairing path: lit once the code was exchanged. */
 export async function pollPairingAction(id: string): Promise<{ paired: boolean }> {
   const session = await getSession();
-  if (!session) return { paired: false };
-  return pairingStatus(db(), id);
+  if (!session || !looksLikeUuid(id)) return { paired: false };
+  return pairingStatus(db(), id, session.userId);
 }
 
 /** Polling for the "waiting for the first connection" indicator (wizard T3). */
