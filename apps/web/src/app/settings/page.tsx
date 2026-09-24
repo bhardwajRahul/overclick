@@ -26,8 +26,13 @@ import {
   updateCommand,
   updaterEnableCommand,
 } from "../../lib/update-commands";
-import { APP_VERSION, readUpdaterState } from "../../lib/updates";
+import { APP_VERSION, readUpdaterState, type UpdaterState } from "../../lib/updates";
+import type { UpdateMode } from "@agent-board/db";
+
+const EMPTY_UPDATER: UpdaterState = { running: false, lastSeenAt: null, status: null };
 import { SettingsClient } from "./settings-client";
+import { loadPendingInvitations, loadTeam } from "../../lib/invitations";
+import { pagePrincipal } from "../../lib/web-scope";
 import {
   isExecutorPairConfigured,
   normalizeObservedExecutor,
@@ -37,6 +42,7 @@ export const dynamic = "force-dynamic";
 
 /** The tabs the client knows, so a link can land on one (OCL-20). */
 const SETTINGS_TABS = new Set([
+  "team",
   "exec",
   "organizations",
   "projects",
@@ -59,13 +65,18 @@ export default async function SettingsPage({
   // The topbar's unpriced-model warning links here straight to the price
   // table; an unknown tab is the same as no tab.
   const tabParam = (await searchParams).tab;
-  const initialTab =
-    typeof tabParam === "string" && SETTINGS_TABS.has(tabParam)
+  const principal = await pagePrincipal(session);
+  const admin = principal.role === "admin";
+  // A member has one tab: their own tokens and pairing (OCL-222).
+  const initialTab = !admin
+    ? "tokens"
+    : typeof tabParam === "string" && SETTINGS_TABS.has(tabParam)
       ? tabParam
       : "exec";
 
   const ws = await db().query.workspace.findFirst();
   if (!ws) redirect("/setup");
+  if (!admin) return <MemberSettings ws={ws} userId={principal.userId} organizationId={principal.organizationId} />;
   const projects = await db().query.project.findMany({
     where: eq(project.workspaceId, ws.id),
     orderBy: asc(project.createdAt),
@@ -215,9 +226,21 @@ export default async function SettingsPage({
       lastSeenAt: s.lastSeenAt,
     }));
 
+  const [members, invitations] = await Promise.all([
+    loadTeam(db(), ws.id),
+    loadPendingInvitations(db(), ws.id),
+  ]);
+
   return (
     <div className="nb nebula-surface">
       <SettingsClient
+        isAdmin
+        team={{
+          currentUserId: session.userId,
+          organizations: organizations.map((row) => ({ id: row.id, name: row.name })),
+          members,
+          invitations,
+        }}
         host={host}
         origin={origin}
         workspaceName={ws.name}
@@ -262,6 +285,96 @@ export default async function SettingsPage({
         pricingEnabled={ws.pricingEnabled}
         claimTimeoutMinutes={ws.claimTimeoutMinutes}
         initialTab={initialTab}
+        tokens={tokens.map((t) => ({
+          id: t.id,
+          label: t.label,
+          masked: `${t.tokenPrefix ?? "ocb_"}••••••••`,
+          canManage: t.canManage,
+          revoked: t.revoked,
+          createdAt: t.createdAt.toISOString(),
+          lastUsedAt: t.lastUsedAt?.toISOString() ?? null,
+        }))}
+      />
+    </div>
+  );
+}
+
+/** The request origin, for the commands and links Settings prints. */
+async function requestOrigin(): Promise<{ host: string; origin: string }> {
+  const h = await headers();
+  const host = h.get("host") ?? "<your-host>";
+  const proto = h.get("x-forwarded-proto")?.split(",")[0].trim()
+    ?? (host.startsWith("localhost") || host.startsWith("127.0.0.1") ? "http" : "https");
+  return { host, origin: `${proto}://${host}` };
+}
+
+/**
+ * Settings as a member sees it: their own tokens and the pairing with the
+ * Overclock app. Nothing of the workspace configuration is read, so nothing of
+ * it can reach the page even hidden.
+ */
+async function MemberSettings({
+  ws,
+  userId,
+  organizationId,
+}: {
+  ws: { id: string; name: string; language: string; updateMode: UpdateMode; claimTimeoutMinutes: number };
+  userId: string;
+  organizationId: string | null;
+}) {
+  const tokens = await db()
+    .select({
+      id: mcpToken.id,
+      label: mcpToken.label,
+      tokenPrefix: mcpToken.tokenPrefix,
+      canManage: mcpToken.canManage,
+      revoked: mcpToken.revoked,
+      lastUsedAt: mcpToken.lastUsedAt,
+      createdAt: mcpToken.createdAt,
+    })
+    .from(mcpToken)
+    .where(and(eq(mcpToken.workspaceId, ws.id), eq(mcpToken.ownerUserId, userId)))
+    .orderBy(desc(mcpToken.createdAt));
+  const [proj] = organizationId
+    ? await db()
+        .select({ name: project.name })
+        .from(project)
+        .where(and(eq(project.workspaceId, ws.id), eq(project.organizationId, organizationId)))
+        .orderBy(asc(project.createdAt))
+        .limit(1)
+    : [];
+  const { host, origin } = await requestOrigin();
+
+  return (
+    <div className="nb nebula-surface">
+      <SettingsClient
+        isAdmin={false}
+        team={null}
+        host={host}
+        origin={origin}
+        workspaceName={ws.name}
+        projectName={proj?.name ?? ws.name}
+        organizations={[]}
+        projects={[]}
+        executors={selectionFromConfig([])}
+        lang={ws.language}
+        updateMode={ws.updateMode}
+        updateLog={null}
+        version={APP_VERSION}
+        runtime={detectRuntime()}
+        updater={EMPTY_UPDATER}
+        enableCommand=""
+        manualCommand=""
+        sourceCommand=""
+        seenSuggestions={[]}
+        prices={[]}
+        unpricedModels={[]}
+        unpricedRanModels={[]}
+        recipes={[]}
+        coverage={[]}
+        pricingEnabled={false}
+        claimTimeoutMinutes={ws.claimTimeoutMinutes}
+        initialTab="tokens"
         tokens={tokens.map((t) => ({
           id: t.id,
           label: t.label,

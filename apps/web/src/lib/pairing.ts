@@ -113,14 +113,19 @@ export async function createPairingCode(
   const code = generatePairingCode();
   const expiresAt = new Date(Date.now() + PAIRING_CODE_TTL_MS);
 
-  // One active code per workspace: a new code replaces any unconsumed one,
-  // which also keeps the guessing space at a single live code.
+  // One active code per person: a new code replaces any unconsumed one of
+  // theirs, which keeps the guessing space at one live code per signed-in
+  // human. Scoped to the author (OCL-222) so a member pairing an agent cannot
+  // cancel the code the admin is reading out at the same time.
   await db
     .delete(pairingCode)
     .where(
       and(
         eq(pairingCode.workspaceId, input.workspaceId),
         isNull(pairingCode.consumedAt),
+        input.userId
+          ? eq(pairingCode.createdByUserId, input.userId)
+          : isNull(pairingCode.createdByUserId),
       ),
     );
 

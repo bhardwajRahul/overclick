@@ -1,7 +1,11 @@
 import { notFound } from "next/navigation";
 import { getSession } from "./cookies";
 import { db } from "./db";
-import { principalFromUserId, type MaybePrincipal } from "./scope";
+import {
+  canManageWorkspace,
+  principalFromUserId,
+  type MaybePrincipal,
+} from "./scope";
 
 /**
  * What the signed-in web user may see, for pages and server actions. Null when
@@ -21,4 +25,17 @@ export async function pagePrincipal(session: {
   const principal = await sessionPrincipal(session);
   if (!principal) notFound();
   return principal;
+}
+
+/** What a member hears from an action that changes the workspace configuration. */
+export const ADMIN_ONLY = "Only an admin can change the workspace configuration.";
+
+/**
+ * Harness, executors, prices, recipes, language, updates, claim timeout,
+ * invitations, team: the admin's. True when the signed-in user may change them.
+ */
+export async function sessionCanManageWorkspace(session: {
+  userId: string;
+}): Promise<boolean> {
+  return canManageWorkspace(await sessionPrincipal(session));
 }

@@ -205,16 +205,10 @@ describe("MCP scope: a member only reaches what is theirs (OCL-220)", () => {
     expect(adminList.ok && (adminList.value as { missions: unknown[] }).missions.length).toBe(2);
   });
 
-  it("a deactivated owner reaches nothing", async () => {
+  it("a deactivated owner's token is refused before any tool runs (OCL-222)", async () => {
     await world.db.update(user).set({ active: false }).where(eq(user.id, memberId));
     const auth = await authenticateBearer(world.db, `Bearer ${memberSecret}`);
-    if (!auth.ok) throw new Error("token row still authenticates");
-    const list = await invokeTool(world.db, auth.ctx, "task_list", {});
-    expect(list.ok && (list.value as { tasks: unknown[] }).tasks).toEqual([]);
-    const get = await invokeTool(world.db, auth.ctx, "task_get", { task_id: memberCard });
-    expect(get.ok).toBe(false);
-    const orgs = await invokeTool(world.db, auth.ctx, "organization_list", {});
-    expect(orgs.ok && (orgs.value as { organizations: unknown[] }).organizations).toEqual([]);
+    expect(auth).toMatchObject({ ok: false, code: "TOKEN_REVOKED" });
   });
 
   it("the server instructions and context resources list only the member's projects", async () => {

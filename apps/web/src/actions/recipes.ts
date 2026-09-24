@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { factoryUsageRecipes, usageRecipe } from "@agent-board/db";
 import type { ActionResult } from "../lib/action-result";
 import { getSession } from "../lib/cookies";
+import { ADMIN_ONLY, sessionCanManageWorkspace } from "../lib/web-scope";
 import { db } from "../lib/db";
 
 export type RecipeInput = {
@@ -24,6 +25,7 @@ export async function saveRecipesAction(
 ): Promise<ActionResult> {
   const session = await getSession();
   if (!session) return { ok: false, error: "Session expired. Sign in again." };
+  if (!(await sessionCanManageWorkspace(session))) return { ok: false, error: ADMIN_ONLY };
 
   const ws = await db().query.workspace.findFirst();
   if (!ws) return { ok: false, error: "Workspace not found." };

@@ -7,8 +7,7 @@ import { closeTestWorld, createTestWorld, type TestWorld } from "../mcp/test-db"
 
 let world: TestWorld;
 
-/** Any signed-in human: the action only asks that a session exists. */
-const OWNER_ID = "00000000-0000-4000-8000-000000000001";
+/** The manage flag is the admin's to grant (OCL-222): sign in as them. */
 
 vi.mock("../lib/db", () => ({
   db: () => world.db,
@@ -16,7 +15,7 @@ vi.mock("../lib/db", () => ({
 }));
 
 vi.mock("../lib/cookies", () => ({
-  getSession: async () => ({ userId: OWNER_ID, sessionVersion: 1, email: "owner@example.com" }),
+  getSession: async () => ({ userId: world.adminUserId, sessionVersion: 1, email: "owner@example.com" }),
 }));
 
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));

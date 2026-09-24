@@ -30,6 +30,12 @@ export const mcpToken = pgTable(
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
     lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
     /**
+     * The first call this token ever made (OCL-222). For a member it is the
+     * moment their installation worked, which is what the admin's team list
+     * and home notice report.
+     */
+    firstUsedAt: timestamp("first_used_at", { withTimezone: true }),
+    /**
      * Whose token this is. It acts with that user's role and scope. Null only
      * for a token no user can be traced to; the scope module treats it as
      * having no access at all.

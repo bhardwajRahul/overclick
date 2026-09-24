@@ -1,6 +1,6 @@
 import { mcpToken, user } from "@agent-board/db";
 import type { ErrorCode } from "@agent-board/mcp-core";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { hashToken, parseBearerToken } from "./token";
 import type { AuthContext, McpDatabase } from "./types";
 
@@ -56,13 +56,22 @@ export async function authenticateBearer(
         .limit(1)
     : [];
 
+  // A deactivated owner keeps the token row but the door closes at once
+  // (OCL-222): the token is refused here, before any tool runs, and stays
+  // refused until an admin reactivates that person.
+  if (owner && !owner.active) {
+    return fail("TOKEN_REVOKED", "The owner of this MCP token was deactivated.");
+  }
+
+  const now = new Date();
   await db
     .update(mcpToken)
-    .set({ lastUsedAt: new Date() })
+    // The first call is kept (OCL-222): it is when an install worked.
+    .set({ lastUsedAt: now, firstUsedAt: sql`coalesce(${mcpToken.firstUsedAt}, now())` })
     .where(eq(mcpToken.id, row.id));
 
-  // A deactivated owner keeps the token row but loses every door: no user on
-  // the context means no principal, and the scope module answers "nothing".
+  // A token with no user behind it loses every door: no user on the context
+  // means no principal, and the scope module answers "nothing".
   const acting = owner?.active ? owner : undefined;
 
   return {

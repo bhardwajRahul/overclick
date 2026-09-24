@@ -20,6 +20,8 @@ import {
 } from "@agent-board/db";
 import { NebulaAtmosphere } from "../../components/nebula-atmosphere";
 import { UpdateBanner } from "../../components/update-banner";
+import { InstallNotice } from "../../components/install-notice";
+import { loadInstallNotices } from "../../lib/invitations";
 import {
   releaseValueOptions,
   resolveBoardFilter,
@@ -740,7 +742,13 @@ export default async function HomePage() {
   const t = dict(ws.language);
   // Opt-in only: in the default mode this instance makes zero outbound calls.
   // In automatic it also starts the update here, without holding the render.
-  const release = await scheduledUpdateCheck(ws);
+  // Updating the instance is the admin's; a member is not offered it.
+  const release = principal.role === "admin" ? await scheduledUpdateCheck(ws) : null;
+  // The admin learns here that a member's install worked (OCL-222).
+  const installNotices =
+    principal.role === "admin"
+      ? await loadInstallNotices(db(), { workspaceId: ws.id, adminUserId: principal.userId })
+      : [];
   scheduledProjectContextRefresh(db(), ws.id);
   // Only a live sidecar makes the banner's button do anything. Read it just
   // when there is a banner to draw.
@@ -803,6 +811,8 @@ export default async function HomePage() {
           sourceCommand={SOURCE_UPDATE_COMMAND}
         />
       ) : null}
+
+      <InstallNotice members={installNotices} lang={ws.language} />
 
       <HomeShell
         lang={ws.language}

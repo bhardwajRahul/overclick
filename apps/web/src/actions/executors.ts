@@ -5,6 +5,7 @@ import { seededEffortSpec } from "@agent-board/mcp-core";
 import { eq } from "drizzle-orm";
 import type { ActionResult } from "../lib/action-result";
 import { getSession } from "../lib/cookies";
+import { ADMIN_ONLY, sessionCanManageWorkspace } from "../lib/web-scope";
 import { db } from "../lib/db";
 import { revalidatePath } from "next/cache";
 import {
@@ -20,6 +21,7 @@ export async function saveExecutorsAction(
 ): Promise<ActionResult> {
   const session = await getSession();
   if (!session) return { ok: false, error: "Session expired. Sign in again." };
+  if (!(await sessionCanManageWorkspace(session))) return { ok: false, error: ADMIN_ONLY };
 
   const ws = await db().query.workspace.findFirst();
   if (!ws) return { ok: false, error: "Workspace not found." };
@@ -104,6 +106,7 @@ export async function addSeenExecutorAction(
 ): Promise<ActionResult> {
   const session = await getSession();
   if (!session) return { ok: false, error: "Session expired. Sign in again." };
+  if (!(await sessionCanManageWorkspace(session))) return { ok: false, error: ADMIN_ONLY };
 
   const ws = await db().query.workspace.findFirst();
   if (!ws) return { ok: false, error: "Workspace not found." };

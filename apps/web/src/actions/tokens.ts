@@ -8,6 +8,13 @@ import { db } from "../lib/db";
 import { createPairingCode, pairingStatus } from "../lib/pairing";
 import { generateTokenSecret, hashToken } from "../mcp/token";
 import type { ActionResult } from "../lib/action-result";
+import { isAdmin, type Principal } from "../lib/scope";
+import { ADMIN_ONLY, sessionPrincipal } from "../lib/web-scope";
+
+/** Tokens the principal may see and manage: an admin any, a member only theirs. */
+function ownTokens(principal: Principal) {
+  return isAdmin(principal) ? undefined : eq(mcpToken.ownerUserId, principal.userId);
+}
 
 export type CreateTokenResult =
   | { ok: true; id: string; secret: string }
@@ -24,6 +31,10 @@ export async function createTokenAction(
 ): Promise<CreateTokenResult> {
   const session = await getSession();
   if (!session) return { ok: false, error: "Session expired. Sign in again." };
+  const principal = await sessionPrincipal(session);
+  if (!principal) return { ok: false, error: "Session expired. Sign in again." };
+  // The manage flag opens the workspace configuration over MCP: the admin's.
+  if (canManage && !isAdmin(principal)) return { ok: false, error: ADMIN_ONLY };
 
   const ws = await db().query.workspace.findFirst();
   if (!ws) return { ok: false, error: "Workspace not found." };
@@ -68,6 +79,7 @@ export async function setTokenManageAction(
 ): Promise<ActionResult> {
   const session = await getSession();
   if (!session) return { ok: false, error: "Session expired. Sign in again." };
+  if (!isAdmin(await sessionPrincipal(session))) return { ok: false, error: ADMIN_ONLY };
 
   const ws = await db().query.workspace.findFirst();
   if (!ws) return { ok: false, error: "Workspace not found." };
@@ -92,14 +104,25 @@ export async function setTokenManageAction(
 export async function revokeTokenAction(tokenId: string): Promise<ActionResult> {
   const session = await getSession();
   if (!session) return { ok: false, error: "Session expired. Sign in again." };
+  const principal = await sessionPrincipal(session);
+  if (!principal) return { ok: false, error: "Session expired. Sign in again." };
 
   const ws = await db().query.workspace.findFirst();
   if (!ws) return { ok: false, error: "Workspace not found." };
 
-  await db()
+  // Someone else's token is "not found" to a member, never "forbidden".
+  const [row] = await db()
     .update(mcpToken)
     .set({ revoked: true, revokedAt: new Date() })
-    .where(and(eq(mcpToken.id, tokenId), eq(mcpToken.workspaceId, ws.id)));
+    .where(
+      and(
+        eq(mcpToken.id, tokenId),
+        eq(mcpToken.workspaceId, ws.id),
+        ownTokens(principal),
+      ),
+    )
+    .returning({ id: mcpToken.id });
+  if (!row) return { ok: false, error: "Token not found." };
   revalidatePath("/settings");
   return { ok: true };
 }
@@ -148,9 +171,11 @@ export async function pollTokenAction(
 ): Promise<{ used: boolean; usedAt: string | null }> {
   const session = await getSession();
   if (!session) return { used: false, usedAt: null };
+  const principal = await sessionPrincipal(session);
+  if (!principal) return { used: false, usedAt: null };
 
   const row = await db().query.mcpToken.findFirst({
-    where: eq(mcpToken.id, tokenId),
+    where: and(eq(mcpToken.id, tokenId), ownTokens(principal)),
     columns: { lastUsedAt: true },
   });
   return {
@@ -172,11 +197,14 @@ export async function workspaceEverConnectedAction(): Promise<{
 }> {
   const session = await getSession();
   if (!session) return { connected: false, at: null };
+  const principal = await sessionPrincipal(session);
+  if (!principal) return { connected: false, at: null };
 
+  // A member asks about their own agents, not the admin's.
   const rows = await db()
     .select({ lastUsedAt: mcpToken.lastUsedAt })
     .from(mcpToken)
-    .where(isNotNull(mcpToken.lastUsedAt))
+    .where(and(isNotNull(mcpToken.lastUsedAt), ownTokens(principal)))
     .orderBy(desc(mcpToken.lastUsedAt))
     .limit(1);
 

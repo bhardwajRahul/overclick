@@ -10,6 +10,8 @@ import { and, asc, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { getSession } from "../lib/cookies";
 import { db } from "../lib/db";
+import { canManageStructure } from "../lib/scope";
+import { sessionPrincipal } from "../lib/web-scope";
 import type { ActionResult } from "../lib/action-result";
 
 export type ProjectInput = {
@@ -67,6 +69,10 @@ async function resolveOrganization(
 export async function saveProjectAction(input: ProjectInput): Promise<ActionResult> {
   const session = await getSession();
   if (!session) return { ok: false, error: "Session expired. Sign in again." };
+  // The wizard creates organizations and projects: the admin's.
+  if (!canManageStructure(await sessionPrincipal(session))) {
+    return { ok: false, error: "Only an admin can change a project." };
+  }
 
   const ws = await db().query.workspace.findFirst();
   if (!ws) return { ok: false, error: "Workspace not found." };

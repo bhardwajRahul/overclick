@@ -12,6 +12,7 @@ import type { ActionResult } from "../lib/action-result";
 import { getSession } from "../lib/cookies";
 import { db } from "../lib/db";
 import { authContextForUser } from "../lib/scope";
+import { ADMIN_ONLY, sessionCanManageWorkspace } from "../lib/web-scope";
 import { invokeTool } from "../mcp/tools";
 
 /** Human release from the card detail, using the same atomic path as MCP. */
@@ -47,6 +48,8 @@ export async function saveClaimTimeoutAction(
 ): Promise<ActionResult> {
   const session = await getSession();
   if (!session) return { ok: false, error: "Session expired. Sign in again." };
+  // The claim lease is workspace configuration: the admin's.
+  if (!(await sessionCanManageWorkspace(session))) return { ok: false, error: ADMIN_ONLY };
   if (!validClaimTimeoutMinutes(timeoutMinutes)) {
     return { ok: false, error: "Claim timeout must be a whole number from 1 to 10080 minutes." };
   }
