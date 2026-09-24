@@ -45,6 +45,9 @@ services:
       # of yours sits in front:
       #   OVERCLICK_TRUSTED_PROXY=1 docker compose up
       OVERCLICK_TRUSTED_PROXY: "${OVERCLICK_TRUSTED_PROXY:-0}"
+      # OCL-226: the GitHub release webhook (/api/github/release) refuses
+      # every call until this holds the secret configured on the webhook.
+      GITHUB_WEBHOOK_SECRET: "${GITHUB_WEBHOOK_SECRET:-}"
     volumes:
       - update-trigger:/update-trigger
     ports:
