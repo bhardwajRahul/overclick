@@ -24,10 +24,30 @@ cp deploy/.env.example deploy/.env       # then fill it in, see below
 POSTGRES_PASSWORD=<a long random string>
 AUTH_SECRET=<32+ random characters>
 OVERCLICK_PORT=3100                      # optional, the loopback port the proxy talks to
+GITHUB_WEBHOOK_SECRET=<random string>    # optional, see "GitHub release webhook"
 ```
 
 Generate both with `openssl rand -hex 32`. The app listens on `127.0.0.1:3100`
 by design: nothing reaches it except through the reverse proxy.
+
+## GitHub release webhook
+
+A project whose context follows a releases repo can be updated the moment a
+release is published, through `POST /api/github/release`. That route only
+accepts deliveries signed with `GITHUB_WEBHOOK_SECRET` (GitHub's
+`X-Hub-Signature-256`) and refuses every call while the variable is empty, so
+it stays closed until you set it up:
+
+1. Generate a secret with `openssl rand -hex 32` and put it in `deploy/.env`
+   as `GITHUB_WEBHOOK_SECRET=`, then run `./deploy/deploy.sh` so the app
+   container picks it up.
+2. In the releases repo on GitHub: Settings → Webhooks → Add webhook. Payload
+   URL `https://<your board>/api/github/release`, content type
+   `application/json`, Secret = the same value, events = "Let me select
+   individual events" → Releases only.
+3. Repeat step 2 for every releases repo a project follows; they all share the
+   one secret. After a redeploy, GitHub's "Recent Deliveries" tab shows the
+   ping answered 200.
 
 ## Reverse proxy
 
